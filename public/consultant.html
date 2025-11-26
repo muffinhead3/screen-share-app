@@ -28,6 +28,8 @@
         .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(33, 150, 243, 0.4); }
         .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: 1px solid rgba(255,255,255,0.2); }
         .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-success { background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%); color: #fff; }
+        .btn-success:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(76, 175, 80, 0.4); }
         .btn-danger { background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); color: #fff; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .share-link-container { display: none; margin-top: 15px; }
@@ -40,7 +42,8 @@
         .file-upload-area.dragover { border-color: #4fc3f7; background: rgba(79, 195, 247, 0.2); }
         .file-upload-icon { font-size: 3rem; margin-bottom: 10px; }
         .file-upload-text { color: #888; }
-        #pdfInput { display: none; }
+        .file-types { font-size: 0.75rem; color: #666; margin-top: 8px; }
+        #fileInput { display: none; }
         .current-file { display: none; background: rgba(76, 175, 80, 0.1); border: 1px solid rgba(76, 175, 80, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 15px; }
         .current-file.active { display: flex; align-items: center; gap: 10px; }
         .current-file-icon { color: #4caf50; font-size: 1.5rem; }
@@ -73,6 +76,7 @@
         .toast.success { border-left: 4px solid #4caf50; }
         .toast.info { border-left: 4px solid #2196f3; }
         .toast.warning { border-left: 4px solid #ff9800; }
+        .capture-section { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); }
     </style>
 </head>
 <body>
@@ -99,16 +103,17 @@
             </div>
             
             <div class="section">
-                <div class="section-title"><span>📄</span> PDF 브로셔</div>
+                <div class="section-title"><span>📄</span> 파일 공유</div>
                 <div id="currentFile" class="current-file">
                     <span class="current-file-icon">✅</span>
                     <span id="currentFileName" class="current-file-name"></span>
                 </div>
                 <div id="fileUploadArea" class="file-upload-area">
                     <div class="file-upload-icon">📁</div>
-                    <div class="file-upload-text">PDF 파일을 여기에 끌어다 놓거나<br>클릭하여 선택하세요</div>
+                    <div class="file-upload-text">파일을 여기에 끌어다 놓거나<br>클릭하여 선택하세요</div>
+                    <div class="file-types">지원: PDF, JPG, PNG, GIF</div>
                 </div>
-                <input type="file" id="pdfInput" accept="application/pdf">
+                <input type="file" id="fileInput" accept="application/pdf,image/jpeg,image/png,image/gif">
             </div>
             
             <div class="section">
@@ -130,14 +135,18 @@
                     <button id="undoBtn" class="btn btn-secondary" style="flex: 1;"><span>↩️</span> 되돌리기</button>
                     <button id="clearBtn" class="btn btn-danger" style="flex: 1;"><span>🗑️</span> 전체 지우기</button>
                 </div>
+                
+                <div class="capture-section">
+                    <button id="captureBtn" class="btn btn-success"><span>📸</span> 화면 캡처 저장</button>
+                </div>
             </div>
         </aside>
         
         <main class="main-content">
             <div id="startScreen" class="start-screen">
                 <div class="start-screen-icon">📑</div>
-                <div class="start-screen-text">PDF 파일을 업로드하면 여기에 표시됩니다</div>
-                <div class="start-screen-subtext">왼쪽에서 세션을 생성하고 PDF를 업로드해주세요</div>
+                <div class="start-screen-text">파일을 업로드하면 여기에 표시됩니다</div>
+                <div class="start-screen-subtext">왼쪽에서 세션을 생성하고 파일을 업로드해주세요</div>
             </div>
             
             <div id="pdfViewerContainer" class="pdf-viewer-container" style="display: none;">
@@ -171,34 +180,26 @@
         let drawHistory = [];
         let currentPath = [];
         let startX, startY;
+        let currentFileType = null;
+        let currentImage = null;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
         const pdfCtx = pdfCanvas.getContext('2d');
         const drawCtx = drawCanvas.getContext('2d');
         
-        // 좌표를 비율로 변환 (0~1 사이 값)
         function toRatio(x, y) {
-            return {
-                x: x / drawCanvas.width,
-                y: y / drawCanvas.height
-            };
+            return { x: x / drawCanvas.width, y: y / drawCanvas.height };
         }
         
-        // 비율을 실제 좌표로 변환
         function fromRatio(rx, ry) {
-            return {
-                x: rx * drawCanvas.width,
-                y: ry * drawCanvas.height
-            };
+            return { x: rx * drawCanvas.width, y: ry * drawCanvas.height };
         }
         
-        // 경로를 비율로 변환
         function pathToRatio(path) {
             return path.map(p => toRatio(p.x, p.y));
         }
         
-        // 비율 경로를 실제 좌표로 변환
         function pathFromRatio(ratioPath) {
             return ratioPath.map(p => fromRatio(p.x, p.y));
         }
@@ -253,44 +254,108 @@
         });
         
         const fileUploadArea = document.getElementById('fileUploadArea');
-        const pdfInput = document.getElementById('pdfInput');
+        const fileInput = document.getElementById('fileInput');
         
-        fileUploadArea.addEventListener('click', () => pdfInput.click());
+        fileUploadArea.addEventListener('click', () => fileInput.click());
         fileUploadArea.addEventListener('dragover', (e) => { e.preventDefault(); fileUploadArea.classList.add('dragover'); });
         fileUploadArea.addEventListener('dragleave', () => { fileUploadArea.classList.remove('dragover'); });
         fileUploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
             fileUploadArea.classList.remove('dragover');
             const file = e.dataTransfer.files[0];
-            if (file && file.type === 'application/pdf') {
-                uploadPDF(file);
-            } else {
-                showToast('PDF 파일만 업로드 가능합니다', 'warning');
-            }
+            if (file) handleFileUpload(file);
         });
-        pdfInput.addEventListener('change', (e) => { if (e.target.files[0]) uploadPDF(e.target.files[0]); });
+        fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFileUpload(e.target.files[0]); });
         
-        async function uploadPDF(file) {
+        function handleFileUpload(file) {
+            const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif'];
+            if (!allowedTypes.includes(file.type)) {
+                showToast('지원하지 않는 파일 형식입니다', 'warning');
+                return;
+            }
+            
+            if (file.type === 'application/pdf') {
+                uploadFile(file, 'pdf');
+            } else {
+                uploadFile(file, 'image');
+            }
+        }
+        
+        async function uploadFile(file, type) {
             if (!sessionId) {
                 showToast('먼저 세션을 생성해주세요', 'warning');
                 return;
             }
             const formData = new FormData();
-            formData.append('pdf', file);
+            formData.append('file', file);
+            formData.append('fileType', type);
             try {
-                showToast('PDF 업로드 중...', 'info');
-                const response = await fetch(`/api/upload-pdf/${sessionId}`, { method: 'POST', body: formData });
+                showToast('파일 업로드 중...', 'info');
+                const response = await fetch(`/api/upload-file/${sessionId}`, { method: 'POST', body: formData });
                 const data = await response.json();
                 if (data.success) {
                     document.getElementById('currentFile').classList.add('active');
                     document.getElementById('currentFileName').textContent = file.name;
-                    await loadPDF(data.pdfUrl);
-                    showToast('PDF가 업로드되었습니다!', 'success');
+                    currentFileType = type;
+                    drawHistory = [];
+                    
+                    if (type === 'pdf') {
+                        await loadPDF(data.fileUrl);
+                    } else {
+                        await loadImage(data.fileUrl);
+                    }
+                    showToast('파일이 업로드되었습니다!', 'success');
                 }
             } catch (error) {
-                console.error('PDF 업로드 오류:', error);
-                showToast('PDF 업로드에 실패했습니다', 'warning');
+                console.error('파일 업로드 오류:', error);
+                showToast('파일 업로드에 실패했습니다', 'warning');
             }
+        }
+        
+        async function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    currentImage = img;
+                    pdfDoc = null;
+                    totalPages = 1;
+                    currentPage = 1;
+                    document.getElementById('startScreen').style.display = 'none';
+                    document.getElementById('pdfViewerContainer').style.display = 'flex';
+                    renderImage();
+                    updatePageInfo();
+                    resolve();
+                };
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+        
+        function renderImage() {
+            if (!currentImage) return;
+            
+            const maxWidth = 800;
+            const maxHeight = 600;
+            let width = currentImage.width;
+            let height = currentImage.height;
+            
+            if (width > maxWidth) {
+                height = (maxWidth / width) * height;
+                width = maxWidth;
+            }
+            if (height > maxHeight) {
+                width = (maxHeight / height) * width;
+                height = maxHeight;
+            }
+            
+            pdfCanvas.width = width;
+            pdfCanvas.height = height;
+            drawCanvas.width = width;
+            drawCanvas.height = height;
+            
+            pdfCtx.drawImage(currentImage, 0, 0, width, height);
+            redrawAll();
         }
         
         async function loadPDF(url) {
@@ -298,6 +363,7 @@
                 pdfDoc = await pdfjsLib.getDocument(url).promise;
                 totalPages = pdfDoc.numPages;
                 currentPage = 1;
+                currentImage = null;
                 document.getElementById('startScreen').style.display = 'none';
                 document.getElementById('pdfViewerContainer').style.display = 'flex';
                 await renderPage(currentPage);
@@ -322,12 +388,12 @@
         
         function updatePageInfo() {
             document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages}`;
-            document.getElementById('prevPageBtn').disabled = currentPage <= 1;
-            document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
+            document.getElementById('prevPageBtn').disabled = currentPage <= 1 || currentFileType === 'image';
+            document.getElementById('nextPageBtn').disabled = currentPage >= totalPages || currentFileType === 'image';
         }
         
         document.getElementById('prevPageBtn').addEventListener('click', () => {
-            if (currentPage > 1) {
+            if (currentPage > 1 && currentFileType === 'pdf') {
                 currentPage--;
                 drawHistory = [];
                 renderPage(currentPage);
@@ -337,7 +403,7 @@
         });
         
         document.getElementById('nextPageBtn').addEventListener('click', () => {
-            if (currentPage < totalPages) {
+            if (currentPage < totalPages && currentFileType === 'pdf') {
                 currentPage++;
                 drawHistory = [];
                 renderPage(currentPage);
@@ -420,7 +486,6 @@
                 }
                 drawCtx.stroke();
                 
-                // 비율로 변환하여 전송
                 socket.emit('drawing', { 
                     sessionId, 
                     path: pathToRatio(currentPath), 
@@ -444,10 +509,8 @@
             let drawingData = { tool: currentTool, color: color, width: width };
             
             if (currentTool === 'pen' || currentTool === 'highlighter') {
-                // 비율로 저장
                 drawingData.path = pathToRatio(currentPath);
             } else {
-                // 비율로 저장
                 const startRatio = toRatio(startX, startY);
                 const endRatio = toRatio(coords.x, coords.y);
                 drawingData.startX = startRatio.x;
@@ -495,7 +558,6 @@
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
                 if (item.tool === 'pen' || item.tool === 'highlighter') {
-                    // 비율을 실제 좌표로 변환
                     const realPath = pathFromRatio(item.path);
                     drawCtx.beginPath();
                     drawCtx.strokeStyle = item.tool === 'highlighter' ? hexToRgba(item.color, 0.3) : item.color;
@@ -508,7 +570,6 @@
                     }
                     drawCtx.stroke();
                 } else {
-                    // 비율을 실제 좌표로 변환
                     const start = fromRatio(item.startX, item.startY);
                     const end = fromRatio(item.endX, item.endY);
                     drawShape(start.x, start.y, end.x, end.y, item.tool, item.color, item.width);
@@ -529,6 +590,29 @@
             redrawAll();
             socket.emit('clear-drawings', { sessionId });
         });
+        
+        // 화면 캡처 기능
+        document.getElementById('captureBtn').addEventListener('click', () => {
+            captureScreen();
+        });
+        
+        function captureScreen() {
+            const captureCanvas = document.createElement('canvas');
+            captureCanvas.width = pdfCanvas.width;
+            captureCanvas.height = pdfCanvas.height;
+            const captureCtx = captureCanvas.getContext('2d');
+            
+            captureCtx.drawImage(pdfCanvas, 0, 0);
+            captureCtx.drawImage(drawCanvas, 0, 0);
+            
+            const link = document.createElement('a');
+            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            link.download = `상담화면_${timestamp}.png`;
+            link.href = captureCanvas.toDataURL('image/png');
+            link.click();
+            
+            showToast('화면이 저장되었습니다!', 'success');
+        }
         
         function updateStatus(status, text) {
             const badge = document.getElementById('statusBadge');

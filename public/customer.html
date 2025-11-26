@@ -96,6 +96,8 @@
         let currentPage = 1;
         let totalPages = 1;
         let drawHistory = [];
+        let currentFileType = null;
+        let currentImage = null;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -103,15 +105,10 @@
         const drawCtx = drawCanvas.getContext('2d');
         const pointer = document.getElementById('consultantPointer');
         
-        // 비율을 실제 좌표로 변환
         function fromRatio(rx, ry) {
-            return {
-                x: rx * drawCanvas.width,
-                y: ry * drawCanvas.height
-            };
+            return { x: rx * drawCanvas.width, y: ry * drawCanvas.height };
         }
         
-        // 비율 경로를 실제 좌표로 변환
         function pathFromRatio(ratioPath) {
             return ratioPath.map(p => fromRatio(p.x, p.y));
         }
@@ -125,11 +122,17 @@
                     return;
                 }
                 initSocket();
-                if (data.session.pdfUrl) {
-                    await loadPDF(data.session.pdfUrl);
-                    currentPage = data.session.currentPage;
+                if (data.session.fileUrl) {
+                    if (data.session.fileType === 'image') {
+                        await loadImage(data.session.fileUrl);
+                    } else {
+                        await loadPDF(data.session.fileUrl);
+                    }
+                    currentPage = data.session.currentPage || 1;
                     drawHistory = data.session.drawings || [];
-                    await renderPage(currentPage);
+                    if (currentFileType === 'pdf') {
+                        await renderPage(currentPage);
+                    }
                 }
             } catch (error) {
                 console.error('초기화 오류:', error);
@@ -147,21 +150,30 @@
             socket.on('disconnect', () => { updateStatus('waiting', '연결 끊김'); });
             socket.on('error', (data) => { showError('오류', data.message); });
             socket.on('session-state', async (data) => {
-                if (data.pdfUrl) {
-                    await loadPDF(data.pdfUrl);
-                    currentPage = data.currentPage;
-                    totalPages = data.totalPages;
+                if (data.fileUrl) {
+                    if (data.fileType === 'image') {
+                        await loadImage(data.fileUrl);
+                    } else {
+                        await loadPDF(data.fileUrl);
+                        currentPage = data.currentPage;
+                        totalPages = data.totalPages;
+                        await renderPage(currentPage);
+                    }
                     drawHistory = data.drawings || [];
-                    await renderPage(currentPage);
+                    redrawAll();
                 }
             });
             socket.on('user-joined', (data) => { if (data.role === 'consultant') showNotification('상담사가 접속했습니다'); });
             socket.on('user-left', (data) => { if (data.role === 'consultant') showNotification('상담사 연결이 끊겼습니다'); });
-            socket.on('pdf-loaded', async (data) => {
-                showNotification('새 문서가 로드되었습니다');
-                await loadPDF(data.pdfUrl);
+            socket.on('file-loaded', async (data) => {
+                showNotification('새 파일이 로드되었습니다');
                 drawHistory = [];
-                await renderPage(1);
+                if (data.fileType === 'image') {
+                    await loadImage(data.fileUrl);
+                } else {
+                    await loadPDF(data.fileUrl);
+                    await renderPage(1);
+                }
             });
             socket.on('page-changed', async (data) => {
                 currentPage = data.page;
@@ -173,7 +185,6 @@
             socket.on('draw-started', (data) => {});
             socket.on('drawing-update', (data) => {
                 redrawAll();
-                // 비율을 실제 좌표로 변환하여 그리기
                 const realPath = pathFromRatio(data.path);
                 drawPathReal(realPath, data.tool, data.color, data.width);
             });
@@ -195,7 +206,6 @@
             });
             socket.on('pointer-moved', (data) => {
                 if (data.visible) {
-                    // 비율을 실제 좌표로 변환
                     const realPos = fromRatio(data.x, data.y);
                     pointer.style.left = `${realPos.x}px`;
                     pointer.style.top = `${realPos.y}px`;
@@ -206,11 +216,55 @@
             });
         }
         
+        async function loadImage(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    currentImage = img;
+                    pdfDoc = null;
+                    currentFileType = 'image';
+                    totalPages = 1;
+                    currentPage = 1;
+                    document.getElementById('waitingScreen').style.display = 'none';
+                    document.getElementById('errorScreen').classList.remove('active');
+                    document.getElementById('pdfViewer').classList.add('active');
+                    renderImage();
+                    updatePageInfo();
+                    resolve();
+                };
+                img.onerror = reject;
+                img.src = url;
+            });
+        }
+        
+        function renderImage() {
+            if (!currentImage) return;
+            
+            const containerWidth = document.querySelector('.pdf-canvas-container').clientWidth - 30;
+            let width = currentImage.width;
+            let height = currentImage.height;
+            
+            const scale = Math.min(containerWidth / width, 2);
+            width = width * scale;
+            height = height * scale;
+            
+            pdfCanvas.width = width;
+            pdfCanvas.height = height;
+            drawCanvas.width = width;
+            drawCanvas.height = height;
+            
+            pdfCtx.drawImage(currentImage, 0, 0, width, height);
+            redrawAll();
+        }
+        
         async function loadPDF(url) {
             try {
                 pdfDoc = await pdfjsLib.getDocument(url).promise;
                 totalPages = pdfDoc.numPages;
                 currentPage = 1;
+                currentImage = null;
+                currentFileType = 'pdf';
                 document.getElementById('waitingScreen').style.display = 'none';
                 document.getElementById('errorScreen').classList.remove('active');
                 document.getElementById('pdfViewer').classList.add('active');
@@ -247,7 +301,6 @@
             return `rgba(${r}, ${g}, ${b}, ${alpha})`;
         }
         
-        // 실제 좌표로 경로 그리기
         function drawPathReal(path, tool, color, width) {
             if (!path || path.length === 0) return;
             drawCtx.beginPath();
@@ -283,11 +336,9 @@
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
                 if (item.tool === 'pen' || item.tool === 'highlighter') {
-                    // 비율을 실제 좌표로 변환
                     const realPath = pathFromRatio(item.path);
                     drawPathReal(realPath, item.tool, item.color, item.width);
                 } else {
-                    // 비율을 실제 좌표로 변환
                     const start = fromRatio(item.startX, item.startY);
                     const end = fromRatio(item.endX, item.endY);
                     drawShape(start.x, start.y, end.x, end.y, item.tool, item.color, item.width);
@@ -317,7 +368,14 @@
             document.getElementById('errorText').textContent = text;
         }
         
-        window.addEventListener('resize', () => { if (pdfDoc) renderPage(currentPage); });
+        window.addEventListener('resize', () => {
+            if (currentFileType === 'image' && currentImage) {
+                renderImage();
+            } else if (pdfDoc) {
+                renderPage(currentPage);
+            }
+        });
+        
         init();
     </script>
 </body>

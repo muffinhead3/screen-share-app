@@ -15,66 +15,105 @@ const io = socketIo(server, {
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// 파일 업로드 설정 (PDF + 이미지)
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+        cb(null, path.join(__dirname, 'uploads'));
     },
     filename: (req, file, cb) => {
-        const originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
-        const ext = path.extname(originalName);
-        const baseName = path.basename(originalName, ext);
-        cb(null, `${Date.now()}-${baseName}${ext}`);
+        const ext = path.extname(file.originalname);
+        cb(null, `${Date.now()}-${uuidv4().slice(0, 8)}${ext}`);
     }
 });
 
-const upload = multer({ 
+const upload = multer({
     storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
     fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf') {
+        const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif'];
+        if (allowedTypes.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            cb(new Error('PDF 파일만 업로드 가능합니다.'), false);
+            cb(new Error('지원하지 않는 파일 형식입니다.'));
         }
-    },
-    limits: {
-        fileSize: 50 * 1024 * 1024
     }
 });
 
+// 세션 저장소
 const sessions = new Map();
 
+// 메인 페이지
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'consultant.html'));
 });
 
+// 고객 페이지
 app.get('/view/:sessionId', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'customer.html'));
 });
 
+// 세션 생성 API
 app.post('/api/create-session', (req, res) => {
-    const sessionId = uuidv4().substring(0, 8);
+    const sessionId = uuidv4().slice(0, 8);
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    
     sessions.set(sessionId, {
         id: sessionId,
-        pdfUrl: null,
+        fileUrl: null,
+        fileType: null,
         currentPage: 1,
         totalPages: 1,
         drawings: [],
-        createdAt: new Date(),
-        consultantConnected: false,
-        customerConnected: false
+        users: { consultant: null, customer: null }
     });
-    
-    const shareUrl = `${req.protocol}://${req.get('host')}/view/${sessionId}`;
     
     res.json({
         success: true,
         sessionId: sessionId,
-        shareUrl: shareUrl
+        shareUrl: `${protocol}://${host}/view/${sessionId}`
     });
 });
 
+// 파일 업로드 API (PDF + 이미지)
+app.post('/api/upload-file/:sessionId', upload.single('file'), (req, res) => {
+    const { sessionId } = req.params;
+    const session = sessions.get(sessionId);
+    
+    if (!session) {
+        return res.status(404).json({ success: false, message: '세션을 찾을 수 없습니다.' });
+    }
+    
+    if (!req.file) {
+        return res.status(400).json({ success: false, message: '파일이 업로드되지 않았습니다.' });
+    }
+    
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const fileUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+    const fileType = req.body.fileType || (req.file.mimetype === 'application/pdf' ? 'pdf' : 'image');
+    
+    session.fileUrl = fileUrl;
+    session.fileType = fileType;
+    session.currentPage = 1;
+    session.drawings = [];
+    
+    // 연결된 고객에게 파일 로드 알림
+    io.to(sessionId).emit('file-loaded', { 
+        fileUrl: fileUrl,
+        fileType: fileType
+    });
+    
+    res.json({
+        success: true,
+        fileUrl: fileUrl,
+        fileType: fileType
+    });
+});
+
+// 기존 PDF 업로드 API (하위 호환성)
 app.post('/api/upload-pdf/:sessionId', upload.single('pdf'), (req, res) => {
     const { sessionId } = req.params;
     const session = sessions.get(sessionId);
@@ -84,13 +123,17 @@ app.post('/api/upload-pdf/:sessionId', upload.single('pdf'), (req, res) => {
     }
     
     if (!req.file) {
-        return res.status(400).json({ success: false, message: 'PDF 파일이 필요합니다.' });
+        return res.status(400).json({ success: false, message: 'PDF가 업로드되지 않았습니다.' });
     }
     
-    const pdfUrl = `/uploads/${req.file.filename}`;
-    session.pdfUrl = pdfUrl;
-    session.drawings = [];
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    const pdfUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+    
+    session.fileUrl = pdfUrl;
+    session.fileType = 'pdf';
     session.currentPage = 1;
+    session.drawings = [];
     
     io.to(sessionId).emit('pdf-loaded', { pdfUrl: pdfUrl });
     
@@ -100,6 +143,7 @@ app.post('/api/upload-pdf/:sessionId', upload.single('pdf'), (req, res) => {
     });
 });
 
+// 세션 정보 조회 API
 app.get('/api/session/:sessionId', (req, res) => {
     const { sessionId } = req.params;
     const session = sessions.get(sessionId);
@@ -110,19 +154,27 @@ app.get('/api/session/:sessionId', (req, res) => {
     
     res.json({
         success: true,
-        session: session
+        session: {
+            id: session.id,
+            fileUrl: session.fileUrl,
+            fileType: session.fileType,
+            currentPage: session.currentPage,
+            totalPages: session.totalPages,
+            drawings: session.drawings
+        }
     });
 });
 
+// Socket.io 연결 처리
 io.on('connection', (socket) => {
-    console.log('새 연결:', socket.id);
+    console.log('새 클라이언트 연결:', socket.id);
     
     socket.on('join-session', (data) => {
         const { sessionId, role } = data;
         const session = sessions.get(sessionId);
         
         if (!session) {
-            socket.emit('error', { message: '존재하지 않는 세션입니다.' });
+            socket.emit('error', { message: '세션을 찾을 수 없습니다.' });
             return;
         }
         
@@ -131,35 +183,32 @@ io.on('connection', (socket) => {
         socket.role = role;
         
         if (role === 'consultant') {
-            session.consultantConnected = true;
+            session.users.consultant = socket.id;
         } else {
-            session.customerConnected = true;
+            session.users.customer = socket.id;
+            // 고객 접속 시 현재 세션 상태 전송
+            socket.emit('session-state', {
+                fileUrl: session.fileUrl,
+                fileType: session.fileType,
+                currentPage: session.currentPage,
+                totalPages: session.totalPages,
+                drawings: session.drawings
+            });
         }
         
-        socket.emit('session-state', {
-            pdfUrl: session.pdfUrl,
-            currentPage: session.currentPage,
-            totalPages: session.totalPages,
-            drawings: session.drawings
-        });
-        
         socket.to(sessionId).emit('user-joined', { role: role });
-        
         console.log(`${role}이(가) 세션 ${sessionId}에 참가`);
     });
     
     socket.on('page-change', (data) => {
-        const { sessionId, page, totalPages } = data;
-        const session = sessions.get(sessionId);
-        
+        const session = sessions.get(data.sessionId);
         if (session) {
-            session.currentPage = page;
-            session.totalPages = totalPages;
+            session.currentPage = data.page;
+            session.totalPages = data.totalPages;
             session.drawings = [];
-            
-            socket.to(sessionId).emit('page-changed', { 
-                page: page,
-                totalPages: totalPages 
+            socket.to(data.sessionId).emit('page-changed', {
+                page: data.page,
+                totalPages: data.totalPages
             });
         }
     });
@@ -169,42 +218,35 @@ io.on('connection', (socket) => {
     });
     
     socket.on('drawing', (data) => {
-        const session = sessions.get(data.sessionId);
-        if (session) {
-            socket.to(data.sessionId).emit('drawing-update', data);
-        }
+        socket.to(data.sessionId).emit('drawing-update', data);
     });
     
     socket.on('draw-end', (data) => {
         const session = sessions.get(data.sessionId);
         if (session && data.drawingData) {
             session.drawings.push(data.drawingData);
-            socket.to(data.sessionId).emit('draw-ended', data);
         }
+        socket.to(data.sessionId).emit('draw-ended', data);
     });
     
     socket.on('clear-drawings', (data) => {
         const session = sessions.get(data.sessionId);
         if (session) {
             session.drawings = [];
-            socket.to(data.sessionId).emit('drawings-cleared');
         }
+        socket.to(data.sessionId).emit('drawings-cleared');
     });
     
     socket.on('undo-drawing', (data) => {
         const session = sessions.get(data.sessionId);
         if (session && session.drawings.length > 0) {
             session.drawings.pop();
-            socket.to(data.sessionId).emit('drawing-undone');
         }
+        socket.to(data.sessionId).emit('drawing-undone');
     });
     
     socket.on('pointer-move', (data) => {
-        socket.to(data.sessionId).emit('pointer-moved', {
-            x: data.x,
-            y: data.y,
-            visible: data.visible
-        });
+        socket.to(data.sessionId).emit('pointer-moved', data);
     });
     
     socket.on('disconnect', () => {
@@ -212,24 +254,18 @@ io.on('connection', (socket) => {
             const session = sessions.get(socket.sessionId);
             if (session) {
                 if (socket.role === 'consultant') {
-                    session.consultantConnected = false;
+                    session.users.consultant = null;
                 } else {
-                    session.customerConnected = false;
+                    session.users.customer = null;
                 }
-                socket.to(socket.sessionId).emit('user-left', { role: socket.role });
             }
+            socket.to(socket.sessionId).emit('user-left', { role: socket.role });
         }
-        console.log('연결 해제:', socket.id);
+        console.log('클라이언트 연결 해제:', socket.id);
     });
 });
 
-const PORT = process.env.PORT || 3000;
-
-const fs = require('fs');
-if (!fs.existsSync('uploads')) {
-    fs.mkdirSync('uploads');
-}
-
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
     console.log('');
     console.log('========================================');
@@ -241,7 +277,7 @@ server.listen(PORT, () => {
     console.log('  사용 방법:');
     console.log('  1. 위 주소로 접속');
     console.log('  2. "새 상담 세션 시작" 클릭');
-    console.log('  3. PDF 파일 업로드');
+    console.log('  3. PDF 또는 이미지 파일 업로드');
     console.log('  4. 생성된 링크를 고객에게 전달');
     console.log('');
     console.log('========================================');
