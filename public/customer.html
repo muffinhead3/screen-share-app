@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>고객 화면 - 상담 화면 공유</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; flex-direction: column; }
+        .header { background: rgba(255,255,255,0.15); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; color: #fff; }
+        .logo { font-size: 1.1rem; font-weight: bold; display: flex; align-items: center; gap: 8px; }
+        .status-badge { padding: 6px 12px; border-radius: 15px; font-size: 0.8rem; display: flex; align-items: center; gap: 6px; }
+        .status-badge.waiting { background: rgba(255, 193, 7, 0.3); }
+        .status-badge.connected { background: rgba(76, 175, 80, 0.3); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .main-container { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .waiting-screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; color: #fff; }
+        .waiting-icon { font-size: 4rem; margin-bottom: 20px; animation: bounce 2s infinite; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+        .waiting-title { font-size: 1.4rem; margin-bottom: 10px; }
+        .waiting-text { font-size: 1rem; opacity: 0.8; }
+        .loading-spinner { width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin-top: 30px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .pdf-viewer { flex: 1; display: none; flex-direction: column; background: #1a1a2e; }
+        .pdf-viewer.active { display: flex; }
+        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; }
+        .page-info { font-size: 0.95rem; background: rgba(255,255,255,0.1); padding: 8px 16px; border-radius: 20px; }
+        .pdf-canvas-container { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 15px; position: relative; -webkit-overflow-scrolling: touch; }
+        .canvas-wrapper { position: relative; display: inline-block; box-shadow: 0 10px 40px rgba(0,0,0,0.4); max-width: 100%; }
+        #pdfCanvas { display: block; background: #fff; max-width: 100%; height: auto; }
+        #drawCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        #consultantPointer { position: absolute; width: 30px; height: 30px; transform: translate(-50%, -50%); pointer-events: none; z-index: 1000; display: none; }
+        #consultantPointer.active { display: block; }
+        .pointer-circle { width: 100%; height: 100%; background: rgba(255, 0, 0, 0.3); border: 3px solid #ff0000; border-radius: 50%; animation: pointer-pulse 1s infinite; }
+        @keyframes pointer-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } }
+        .notification { position: fixed; top: 70px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(0,0,0,0.9); color: #fff; padding: 12px 24px; border-radius: 25px; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; opacity: 0; transition: all 0.3s; z-index: 1000; }
+        .notification.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .error-screen { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; color: #fff; }
+        .error-screen.active { display: flex; }
+        .error-icon { font-size: 4rem; margin-bottom: 20px; }
+        .error-title { font-size: 1.3rem; margin-bottom: 10px; }
+        .error-text { font-size: 0.95rem; opacity: 0.8; }
+        .footer-info { background: rgba(0,0,0,0.3); padding: 12px 20px; text-align: center; color: rgba(255,255,255,0.7); font-size: 0.85rem; }
+        .footer-info span { color: #fff; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo"><span>📞</span><span>상담 화면 공유</span></div>
+        <div id="statusBadge" class="status-badge waiting">
+            <div class="status-dot"></div>
+            <span id="statusText">연결 중...</span>
+        </div>
+    </header>
+    
+    <div class="main-container">
+        <div id="waitingScreen" class="waiting-screen">
+            <div class="waiting-icon">📑</div>
+            <div class="waiting-title">상담사 연결 대기 중</div>
+            <div class="waiting-text">잠시만 기다려 주세요</div>
+            <div class="loading-spinner"></div>
+        </div>
+        
+        <div id="errorScreen" class="error-screen">
+            <div class="error-icon">❌</div>
+            <div id="errorTitle" class="error-title">세션을 찾을 수 없습니다</div>
+            <div id="errorText" class="error-text">상담사에게 새로운 링크를 요청해 주세요</div>
+        </div>
+        
+        <div id="pdfViewer" class="pdf-viewer">
+            <div class="pdf-toolbar">
+                <span id="pageInfo" class="page-info">📄 1 / 1 페이지</span>
+            </div>
+            <div class="pdf-canvas-container">
+                <div class="canvas-wrapper">
+                    <canvas id="pdfCanvas"></canvas>
+                    <canvas id="drawCanvas"></canvas>
+                    <div id="consultantPointer"><div class="pointer-circle"></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="footer-info">💡 <span>스피커폰</span>으로 전환하시면 화면을 보면서 통화할 수 있습니다</div>
+    <div id="notification" class="notification"></div>
+    
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        const sessionId = window.location.pathname.split('/').pop();
+        let socket = null;
+        let pdfDoc = null;
+        let currentPage = 1;
+        let totalPages = 1;
+        let drawHistory = [];
+        
+        const pdfCanvas = document.getElementById('pdfCanvas');
+        const drawCanvas = document.getElementById('drawCanvas');
+        const pdfCtx = pdfCanvas.getContext('2d');
+        const drawCtx = drawCanvas.getContext('2d');
+        const pointer = document.getElementById('consultantPointer');
+        
+        async function init() {
+            try {
+                const response = await fetch(`/api/session/${sessionId}`);
+                const data = await response.json();
+                if (!data.success) {
+                    showError('세션을 찾을 수 없습니다', '상담사에게 새로운 링크를 요청해 주세요');
+                    return;
+                }
+                initSocket();
+                if (data.session.pdfUrl) {
+                    await loadPDF(data.session.pdfUrl);
+                    currentPage = data.session.currentPage;
+                    drawHistory = data.session.drawings || [];
+                    await renderPage(currentPage);
+                }
+            } catch (error) {
+                console.error('초기화 오류:', error);
+                showError('연결 오류', '네트워크 연결을 확인해 주세요');
+            }
+        }
+        
+        function initSocket() {
+            socket = io();
+            socket.on('connect', () => {
+                console.log('서버 연결됨');
+                socket.emit('join-session', { sessionId, role: 'customer' });
+                updateStatus('connected', '연결됨');
+            });
+            socket.on('disconnect', () => { updateStatus('waiting', '연결 끊김'); });
+            socket.on('error', (data) => { showError('오류', data.message); });
+            socket.on('session-state', async (data) => {
+                if (data.pdfUrl) {
+                    await loadPDF(data.pdfUrl);
+                    currentPage = data.currentPage;
+                    totalPages = data.totalPages;
+                    drawHistory = data.drawings || [];
+                    await renderPage(currentPage);
+                }
+            });
+            socket.on('user-joined', (data) => { if (data.role === 'consultant') showNotification('상담사가 접속했습니다'); });
+            socket.on('user-left', (data) => { if (data.role === 'consultant') showNotification('상담사 연결이 끊겼습니다'); });
+            socket.on('pdf-loaded', async (data) => {
+                showNotification('새 문서가 로드되었습니다');
+                await loadPDF(data.pdfUrl);
+                drawHistory = [];
+                await renderPage(1);
+            });
+            socket.on('page-changed', async (data) => {
+                currentPage = data.page;
+                totalPages = data.totalPages;
+                drawHistory = [];
+                await renderPage(currentPage);
+                showNotification(`${currentPage} 페이지로 이동`);
+            });
+            socket.on('draw-started', (data) => {});
+            socket.on('drawing-update', (data) => {
+                redrawAll();
+                drawPath(data.path, data.tool, data.color, data.width);
+            });
+            socket.on('draw-ended', (data) => {
+                if (data.drawingData) {
+                    drawHistory.push(data.drawingData);
+                    redrawAll();
+                }
+            });
+            socket.on('drawing-undone', () => {
+                if (drawHistory.length > 0) {
+                    drawHistory.pop();
+                    redrawAll();
+                }
+            });
+            socket.on('drawings-cleared', () => {
+                drawHistory = [];
+                redrawAll();
+            });
+            socket.on('pointer-moved', (data) => {
+                if (data.visible) {
+                    pointer.style.left = `${data.x * pdfCanvas.width}px`;
+                    pointer.style.top = `${data.y * pdfCanvas.height}px`;
+                    pointer.classList.add('active');
+                } else {
+                    pointer.classList.remove('active');
+                }
+            });
+        }
+        
+        async function loadPDF(url) {
+            try {
+                pdfDoc = await pdfjsLib.getDocument(url).promise;
+                totalPages = pdfDoc.numPages;
+                currentPage = 1;
+                document.getElementById('waitingScreen').style.display = 'none';
+                document.getElementById('errorScreen').classList.remove('active');
+                document.getElementById('pdfViewer').classList.add('active');
+            } catch (error) {
+                console.error('PDF 로드 오류:', error);
+                showNotification('문서를 불러올 수 없습니다');
+            }
+        }
+        
+        async function renderPage(pageNum) {
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(pageNum);
+            const containerWidth = document.querySelector('.pdf-canvas-container').clientWidth - 30;
+            const viewport = page.getViewport({ scale: 1 });
+            const scale = Math.min(containerWidth / viewport.width, 2);
+            const scaledViewport = page.getViewport({ scale });
+            pdfCanvas.width = scaledViewport.width;
+            pdfCanvas.height = scaledViewport.height;
+            drawCanvas.width = scaledViewport.width;
+            drawCanvas.height = scaledViewport.height;
+            await page.render({ canvasContext: pdfCtx, viewport: scaledViewport }).promise;
+            updatePageInfo();
+            redrawAll();
+        }
+        
+        function updatePageInfo() {
+            document.getElementById('pageInfo').textContent = `📄 ${currentPage} / ${totalPages} 페이지`;
+        }
+        
+        function hexToRgba(hex, alpha) {
+            const r = parseInt(hex.slice(1, 3), 16);
+            const g = parseInt(hex.slice(3, 5), 16);
+            const b = parseInt(hex.slice(5, 7), 16);
+            return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        }
+        
+        function drawPath(path, tool, color, width) {
+            if (!path || path.length === 0) return;
+            drawCtx.beginPath();
+            drawCtx.strokeStyle = tool === 'highlighter' ? hexToRgba(color, 0.3) : color;
+            drawCtx.lineWidth = tool === 'highlighter' ? width * 3 : width;
+            drawCtx.lineCap = 'round';
+            drawCtx.lineJoin = 'round';
+            drawCtx.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) {
+                drawCtx.lineTo(path[i].x, path[i].y);
+            }
+            drawCtx.stroke();
+        }
+        
+        function drawShape(x1, y1, x2, y2, shape, color, width) {
+            drawCtx.strokeStyle = color;
+            drawCtx.lineWidth = width;
+            drawCtx.lineCap = 'round';
+            if (shape === 'rectangle') {
+                drawCtx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+            } else if (shape === 'circle') {
+                const radiusX = Math.abs(x2 - x1) / 2;
+                const radiusY = Math.abs(y2 - y1) / 2;
+                const centerX = x1 + (x2 - x1) / 2;
+                const centerY = y1 + (y2 - y1) / 2;
+                drawCtx.beginPath();
+                drawCtx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, 2 * Math.PI);
+                drawCtx.stroke();
+            }
+        }
+        
+        function redrawAll() {
+            drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
+            for (const item of drawHistory) {
+                if (item.tool === 'pen' || item.tool === 'highlighter') {
+                    drawPath(item.path, item.tool, item.color, item.width);
+                } else {
+                    drawShape(item.startX, item.startY, item.endX, item.endY, item.tool, item.color, item.width);
+                }
+            }
+        }
+        
+        function updateStatus(status, text) {
+            const badge = document.getElementById('statusBadge');
+            const statusText = document.getElementById('statusText');
+            badge.className = `status-badge ${status}`;
+            statusText.textContent = text;
+        }
+        
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.classList.add('show');
+            setTimeout(() => { notification.classList.remove('show'); }, 3000);
+        }
+        
+        function showError(title, text) {
+            document.getElementById('waitingScreen').style.display = 'none';
+            document.getElementById('pdfViewer').classList.remove('active');
+            document.getElementById('errorScreen').classList.add('active');
+            document.getElementById('errorTitle').textContent = title;
+            document.getElementById('errorText').textContent = text;
+        }
+        
+        window.addEventListener('resize', () => { if (pdfDoc) renderPage(currentPage); });
+        init();
+    </script>
+</body>
+</html>
