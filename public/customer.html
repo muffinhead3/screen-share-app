@@ -26,12 +26,15 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .pdf-viewer { flex: 1; display: none; flex-direction: column; background: #1a1a2e; }
         .pdf-viewer.active { display: flex; }
-        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; }
-        .page-info { font-size: 0.95rem; background: rgba(255,255,255,0.1); padding: 8px 16px; border-radius: 20px; }
+        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; flex-wrap: wrap; }
+        .toolbar-group { display: flex; align-items: center; gap: 8px; }
+        .toolbar-divider { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
+        .page-info { font-size: 0.9rem; background: rgba(255,255,255,0.1); padding: 6px 12px; border-radius: 15px; }
+        .zoom-info { font-size: 0.85rem; color: #4fc3f7; font-weight: bold; background: rgba(79, 195, 247, 0.2); padding: 6px 12px; border-radius: 15px; }
         .pdf-canvas-container { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 15px; position: relative; -webkit-overflow-scrolling: touch; }
-        .canvas-wrapper { position: relative; display: inline-block; box-shadow: 0 10px 40px rgba(0,0,0,0.4); max-width: 100%; }
-        #pdfCanvas { display: block; background: #fff; max-width: 100%; height: auto; }
-        #drawCanvas { position: absolute; top: 0; left: 0; pointer-events: none; max-width: 100%; height: auto; }
+        .canvas-wrapper { position: relative; display: inline-block; box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
+        #pdfCanvas { display: block; background: #fff; }
+        #drawCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
         #consultantPointer { position: absolute; width: 30px; height: 30px; transform: translate(-50%, -50%); pointer-events: none; z-index: 1000; display: none; }
         #consultantPointer.active { display: block; }
         .pointer-circle { width: 100%; height: 100%; background: rgba(255, 0, 0, 0.3); border: 3px solid #ff0000; border-radius: 50%; animation: pointer-pulse 1s infinite; }
@@ -72,7 +75,13 @@
         
         <div id="pdfViewer" class="pdf-viewer">
             <div class="pdf-toolbar">
-                <span id="pageInfo" class="page-info">📄 1 / 1 페이지</span>
+                <div class="toolbar-group">
+                    <span id="pageInfo" class="page-info">📄 1 / 1 페이지</span>
+                </div>
+                <div class="toolbar-divider"></div>
+                <div class="toolbar-group">
+                    <span id="zoomInfo" class="zoom-info">🔍 100%</span>
+                </div>
             </div>
             <div class="pdf-canvas-container">
                 <div class="canvas-wrapper">
@@ -98,6 +107,8 @@
         let drawHistory = [];
         let currentFileType = null;
         let currentImage = null;
+        let currentZoom = 1.0;
+        let currentFileUrl = null;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -113,6 +124,10 @@
             return ratioPath.map(p => fromRatio(p.x, p.y));
         }
         
+        function updateZoomInfo() {
+            document.getElementById('zoomInfo').textContent = `🔍 ${Math.round(currentZoom * 100)}%`;
+        }
+        
         async function init() {
             try {
                 const response = await fetch(`/api/session/${sessionId}`);
@@ -123,6 +138,10 @@
                 }
                 initSocket();
                 if (data.session.fileUrl) {
+                    currentFileUrl = data.session.fileUrl;
+                    currentZoom = data.session.zoom || 1.0;
+                    updateZoomInfo();
+                    
                     if (data.session.fileType === 'image') {
                         await loadImage(data.session.fileUrl);
                     } else {
@@ -151,6 +170,10 @@
             socket.on('error', (data) => { showError('오류', data.message); });
             socket.on('session-state', async (data) => {
                 if (data.fileUrl) {
+                    currentFileUrl = data.fileUrl;
+                    currentZoom = data.zoom || 1.0;
+                    updateZoomInfo();
+                    
                     if (data.fileType === 'image') {
                         await loadImage(data.fileUrl);
                     } else {
@@ -168,6 +191,10 @@
             socket.on('file-loaded', async (data) => {
                 showNotification('새 파일이 로드되었습니다');
                 drawHistory = [];
+                currentFileUrl = data.fileUrl;
+                currentZoom = 1.0;
+                updateZoomInfo();
+                
                 if (data.fileType === 'image') {
                     await loadImage(data.fileUrl);
                 } else {
@@ -182,6 +209,20 @@
                 await renderPage(currentPage);
                 showNotification(`${currentPage} 페이지로 이동`);
             });
+            
+            // 줌 변경 이벤트 수신
+            socket.on('zoom-changed', async (data) => {
+                currentZoom = data.zoom;
+                updateZoomInfo();
+                
+                if (currentFileType === 'image' && currentImage) {
+                    renderImage();
+                } else if (pdfDoc) {
+                    await renderPage(currentPage);
+                }
+                showNotification(`화면 크기: ${Math.round(currentZoom * 100)}%`);
+            });
+            
             socket.on('draw-started', (data) => {});
             socket.on('drawing-update', (data) => {
                 redrawAll();
@@ -241,13 +282,9 @@
         function renderImage() {
             if (!currentImage) return;
             
-            const containerWidth = document.querySelector('.pdf-canvas-container').clientWidth - 30;
-            let width = currentImage.width;
-            let height = currentImage.height;
-            
-            const scale = Math.min(containerWidth / width, 2);
-            width = width * scale;
-            height = height * scale;
+            // 줌 적용된 크기 계산
+            let width = currentImage.width * currentZoom;
+            let height = currentImage.height * currentZoom;
             
             pdfCanvas.width = width;
             pdfCanvas.height = height;
@@ -277,15 +314,15 @@
         async function renderPage(pageNum) {
             if (!pdfDoc) return;
             const page = await pdfDoc.getPage(pageNum);
-            const containerWidth = document.querySelector('.pdf-canvas-container').clientWidth - 30;
-            const viewport = page.getViewport({ scale: 1 });
-            const scale = Math.min(containerWidth / viewport.width, 2);
-            const scaledViewport = page.getViewport({ scale });
-            pdfCanvas.width = scaledViewport.width;
-            pdfCanvas.height = scaledViewport.height;
-            drawCanvas.width = scaledViewport.width;
-            drawCanvas.height = scaledViewport.height;
-            await page.render({ canvasContext: pdfCtx, viewport: scaledViewport }).promise;
+            const scale = 1.5 * currentZoom; // 기본 스케일에 줌 적용
+            const viewport = page.getViewport({ scale });
+            
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+            drawCanvas.width = viewport.width;
+            drawCanvas.height = viewport.height;
+            
+            await page.render({ canvasContext: pdfCtx, viewport: viewport }).promise;
             updatePageInfo();
             redrawAll();
         }
@@ -369,11 +406,7 @@
         }
         
         window.addEventListener('resize', () => {
-            if (currentFileType === 'image' && currentImage) {
-                renderImage();
-            } else if (pdfDoc) {
-                renderPage(currentPage);
-            }
+            // 화면 크기 변경 시에는 줌 레벨 유지
         });
         
         init();

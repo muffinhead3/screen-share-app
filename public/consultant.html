@@ -58,11 +58,16 @@
         .stroke-width-slider { flex: 1; height: 6px; -webkit-appearance: none; background: rgba(255,255,255,0.2); border-radius: 3px; }
         .stroke-width-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: #4fc3f7; border-radius: 50%; cursor: pointer; }
         .pdf-viewer-container { flex: 1; display: flex; flex-direction: column; background: rgba(255,255,255,0.05); border-radius: 12px; overflow: hidden; }
-        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 15px; background: rgba(0,0,0,0.3); }
+        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 15px; background: rgba(0,0,0,0.3); flex-wrap: wrap; }
+        .toolbar-group { display: flex; align-items: center; gap: 10px; }
+        .toolbar-divider { width: 1px; height: 30px; background: rgba(255,255,255,0.2); margin: 0 5px; }
         .page-nav-btn { width: 40px; height: 40px; border-radius: 8px; background: rgba(255,255,255,0.1); border: none; color: #fff; cursor: pointer; font-size: 1.2rem; transition: all 0.3s; }
         .page-nav-btn:hover:not(:disabled) { background: rgba(255,255,255,0.2); }
         .page-nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-        .page-info { font-size: 1rem; color: #fff; min-width: 100px; text-align: center; }
+        .page-info { font-size: 1rem; color: #fff; min-width: 80px; text-align: center; }
+        .zoom-btn { width: 36px; height: 36px; border-radius: 8px; background: rgba(255,255,255,0.1); border: none; color: #fff; cursor: pointer; font-size: 1.2rem; transition: all 0.3s; }
+        .zoom-btn:hover { background: rgba(255,255,255,0.2); }
+        .zoom-info { font-size: 0.9rem; color: #4fc3f7; min-width: 60px; text-align: center; font-weight: bold; }
         .pdf-canvas-container { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 20px; position: relative; }
         .canvas-wrapper { position: relative; display: inline-block; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
         #pdfCanvas { display: block; background: #fff; }
@@ -151,9 +156,18 @@
             
             <div id="pdfViewerContainer" class="pdf-viewer-container" style="display: none;">
                 <div class="pdf-toolbar">
-                    <button id="prevPageBtn" class="page-nav-btn" disabled>◀</button>
-                    <span id="pageInfo" class="page-info">1 / 1</span>
-                    <button id="nextPageBtn" class="page-nav-btn" disabled>▶</button>
+                    <div class="toolbar-group">
+                        <button id="prevPageBtn" class="page-nav-btn" disabled>◀</button>
+                        <span id="pageInfo" class="page-info">1 / 1</span>
+                        <button id="nextPageBtn" class="page-nav-btn" disabled>▶</button>
+                    </div>
+                    <div class="toolbar-divider"></div>
+                    <div class="toolbar-group">
+                        <button id="zoomOutBtn" class="zoom-btn" title="축소">➖</button>
+                        <span id="zoomInfo" class="zoom-info">100%</span>
+                        <button id="zoomInBtn" class="zoom-btn" title="확대">➕</button>
+                        <button id="zoomResetBtn" class="zoom-btn" title="원래 크기" style="font-size: 0.8rem;">100</button>
+                    </div>
                 </div>
                 <div class="pdf-canvas-container">
                     <div class="canvas-wrapper">
@@ -182,6 +196,10 @@
         let startX, startY;
         let currentFileType = null;
         let currentImage = null;
+        let currentZoom = 1.0; // 줌 레벨 (1.0 = 100%)
+        const MIN_ZOOM = 0.5;  // 최소 50%
+        const MAX_ZOOM = 3.0;  // 최대 300%
+        const ZOOM_STEP = 0.25; // 25%씩 증가/감소
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -204,6 +222,10 @@
             return ratioPath.map(p => fromRatio(p.x, p.y));
         }
         
+        function updateZoomInfo() {
+            document.getElementById('zoomInfo').textContent = `${Math.round(currentZoom * 100)}%`;
+        }
+        
         function initSocket() {
             socket = io();
             socket.on('connect', () => {
@@ -216,6 +238,8 @@
                 if (data.role === 'customer') {
                     updateStatus('connected', '고객 연결됨');
                     showToast('고객이 접속했습니다!', 'success');
+                    // 고객 접속 시 현재 줌 레벨 전송
+                    socket.emit('zoom-change', { sessionId, zoom: currentZoom });
                 }
             });
             socket.on('user-left', (data) => {
@@ -298,6 +322,8 @@
                     document.getElementById('currentFileName').textContent = file.name;
                     currentFileType = type;
                     drawHistory = [];
+                    currentZoom = 1.0; // 새 파일 로드 시 줌 리셋
+                    updateZoomInfo();
                     
                     if (type === 'pdf') {
                         await loadPDF(data.fileUrl);
@@ -335,19 +361,9 @@
         function renderImage() {
             if (!currentImage) return;
             
-            const maxWidth = 800;
-            const maxHeight = 600;
-            let width = currentImage.width;
-            let height = currentImage.height;
-            
-            if (width > maxWidth) {
-                height = (maxWidth / width) * height;
-                width = maxWidth;
-            }
-            if (height > maxHeight) {
-                width = (maxHeight / height) * width;
-                height = maxHeight;
-            }
+            // 줌 적용된 크기 계산
+            let width = currentImage.width * currentZoom;
+            let height = currentImage.height * currentZoom;
             
             pdfCanvas.width = width;
             pdfCanvas.height = height;
@@ -376,7 +392,7 @@
         
         async function renderPage(pageNum) {
             const page = await pdfDoc.getPage(pageNum);
-            const scale = 1.5;
+            const scale = 1.5 * currentZoom; // 기본 스케일에 줌 적용
             const viewport = page.getViewport({ scale });
             pdfCanvas.width = viewport.width;
             pdfCanvas.height = viewport.height;
@@ -390,6 +406,41 @@
             document.getElementById('pageInfo').textContent = `${currentPage} / ${totalPages}`;
             document.getElementById('prevPageBtn').disabled = currentPage <= 1 || currentFileType === 'image';
             document.getElementById('nextPageBtn').disabled = currentPage >= totalPages || currentFileType === 'image';
+        }
+        
+        // 줌 버튼 이벤트
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            if (currentZoom < MAX_ZOOM) {
+                currentZoom = Math.min(currentZoom + ZOOM_STEP, MAX_ZOOM);
+                applyZoom();
+            }
+        });
+        
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            if (currentZoom > MIN_ZOOM) {
+                currentZoom = Math.max(currentZoom - ZOOM_STEP, MIN_ZOOM);
+                applyZoom();
+            }
+        });
+        
+        document.getElementById('zoomResetBtn').addEventListener('click', () => {
+            currentZoom = 1.0;
+            applyZoom();
+        });
+        
+        function applyZoom() {
+            updateZoomInfo();
+            
+            if (currentFileType === 'image' && currentImage) {
+                renderImage();
+            } else if (pdfDoc) {
+                renderPage(currentPage);
+            }
+            
+            // 줌 변경을 고객에게 전송
+            if (socket && sessionId) {
+                socket.emit('zoom-change', { sessionId, zoom: currentZoom });
+            }
         }
         
         document.getElementById('prevPageBtn').addEventListener('click', () => {
