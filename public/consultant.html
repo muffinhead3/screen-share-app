@@ -82,6 +82,7 @@
         .toast.info { border-left: 4px solid #2196f3; }
         .toast.warning { border-left: 4px solid #ff9800; }
         .capture-section { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .eraser-cursor { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="white" stroke="black" stroke-width="2"/></svg>') 10 10, auto; }
     </style>
 </head>
 <body>
@@ -129,6 +130,7 @@
                     <button id="highlighterTool" class="tool-btn" title="형광펜">🖍️</button>
                     <button id="rectangleTool" class="tool-btn" title="사각형">⬜</button>
                     <button id="circleTool" class="tool-btn" title="원">⭕</button>
+                    <button id="eraserTool" class="tool-btn" title="지우개">🧽</button>
                     <input type="color" id="colorPicker" class="color-picker" value="#ff0000" title="색상 선택">
                 </div>
                 <div class="stroke-width-container">
@@ -196,10 +198,11 @@
         let startX, startY;
         let currentFileType = null;
         let currentImage = null;
-        let currentZoom = 1.0; // 줌 레벨 (1.0 = 100%)
-        const MIN_ZOOM = 0.5;  // 최소 50%
-        const MAX_ZOOM = 3.0;  // 최대 300%
-        const ZOOM_STEP = 0.25; // 25%씩 증가/감소
+        let currentZoom = 1.0;
+        const MIN_ZOOM = 0.5;
+        const MAX_ZOOM = 3.0;
+        const ZOOM_STEP = 0.25;
+        const ERASER_SIZE = 20;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -238,7 +241,6 @@
                 if (data.role === 'customer') {
                     updateStatus('connected', '고객 연결됨');
                     showToast('고객이 접속했습니다!', 'success');
-                    // 고객 접속 시 현재 줌 레벨 전송
                     socket.emit('zoom-change', { sessionId, zoom: currentZoom });
                 }
             });
@@ -322,7 +324,7 @@
                     document.getElementById('currentFileName').textContent = file.name;
                     currentFileType = type;
                     drawHistory = [];
-                    currentZoom = 1.0; // 새 파일 로드 시 줌 리셋
+                    currentZoom = 1.0;
                     updateZoomInfo();
                     
                     if (type === 'pdf') {
@@ -361,7 +363,6 @@
         function renderImage() {
             if (!currentImage) return;
             
-            // 줌 적용된 크기 계산
             let width = currentImage.width * currentZoom;
             let height = currentImage.height * currentZoom;
             
@@ -392,7 +393,7 @@
         
         async function renderPage(pageNum) {
             const page = await pdfDoc.getPage(pageNum);
-            const scale = 1.5 * currentZoom; // 기본 스케일에 줌 적용
+            const scale = 1.5 * currentZoom;
             const viewport = page.getViewport({ scale });
             pdfCanvas.width = viewport.width;
             pdfCanvas.height = viewport.height;
@@ -408,7 +409,6 @@
             document.getElementById('nextPageBtn').disabled = currentPage >= totalPages || currentFileType === 'image';
         }
         
-        // 줌 버튼 이벤트
         document.getElementById('zoomInBtn').addEventListener('click', () => {
             if (currentZoom < MAX_ZOOM) {
                 currentZoom = Math.min(currentZoom + ZOOM_STEP, MAX_ZOOM);
@@ -437,7 +437,6 @@
                 renderPage(currentPage);
             }
             
-            // 줌 변경을 고객에게 전송
             if (socket && sessionId) {
                 socket.emit('zoom-change', { sessionId, zoom: currentZoom });
             }
@@ -468,7 +467,8 @@
             pen: document.getElementById('penTool'),
             highlighter: document.getElementById('highlighterTool'),
             rectangle: document.getElementById('rectangleTool'),
-            circle: document.getElementById('circleTool')
+            circle: document.getElementById('circleTool'),
+            eraser: document.getElementById('eraserTool')
         };
         
         Object.entries(toolButtons).forEach(([tool, btn]) => {
@@ -476,7 +476,17 @@
                 currentTool = tool;
                 Object.values(toolButtons).forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-                drawCanvas.style.cursor = tool === 'pointer' ? 'default' : 'crosshair';
+                
+                if (tool === 'pointer') {
+                    drawCanvas.style.cursor = 'default';
+                    drawCanvas.classList.remove('eraser-cursor');
+                } else if (tool === 'eraser') {
+                    drawCanvas.style.cursor = 'none';
+                    drawCanvas.classList.add('eraser-cursor');
+                } else {
+                    drawCanvas.style.cursor = 'crosshair';
+                    drawCanvas.classList.remove('eraser-cursor');
+                }
             });
         });
         
@@ -500,15 +510,21 @@
             startY = coords.y;
             currentPath = [{ x: startX, y: startY }];
             
-            const startRatio = toRatio(startX, startY);
-            socket.emit('draw-start', { 
-                sessionId, 
-                tool: currentTool, 
-                color: colorPicker.value, 
-                width: parseInt(strokeWidth.value), 
-                x: startRatio.x, 
-                y: startRatio.y 
-            });
+            if (currentTool === 'eraser') {
+                // 지우개 시작
+                eraseAt(coords.x, coords.y);
+                socket.emit('eraser-start', { sessionId, x: toRatio(coords.x, coords.y).x, y: toRatio(coords.x, coords.y).y });
+            } else {
+                const startRatio = toRatio(startX, startY);
+                socket.emit('draw-start', { 
+                    sessionId, 
+                    tool: currentTool, 
+                    color: colorPicker.value, 
+                    width: parseInt(strokeWidth.value), 
+                    x: startRatio.x, 
+                    y: startRatio.y 
+                });
+            }
         });
         
         drawCanvas.addEventListener('mousemove', (e) => {
@@ -520,33 +536,40 @@
             }
             
             if (!isDrawing) return;
-            const color = colorPicker.value;
-            const width = parseInt(strokeWidth.value);
             
-            if (currentTool === 'pen' || currentTool === 'highlighter') {
+            if (currentTool === 'eraser') {
+                eraseAt(coords.x, coords.y);
                 currentPath.push({ x: coords.x, y: coords.y });
-                redrawAll();
-                drawCtx.beginPath();
-                drawCtx.strokeStyle = currentTool === 'highlighter' ? hexToRgba(color, 0.3) : color;
-                drawCtx.lineWidth = currentTool === 'highlighter' ? width * 3 : width;
-                drawCtx.lineCap = 'round';
-                drawCtx.lineJoin = 'round';
-                drawCtx.moveTo(currentPath[0].x, currentPath[0].y);
-                for (let i = 1; i < currentPath.length; i++) {
-                    drawCtx.lineTo(currentPath[i].x, currentPath[i].y);
-                }
-                drawCtx.stroke();
+                socket.emit('erasing', { sessionId, path: pathToRatio(currentPath) });
+            } else {
+                const color = colorPicker.value;
+                const width = parseInt(strokeWidth.value);
                 
-                socket.emit('drawing', { 
-                    sessionId, 
-                    path: pathToRatio(currentPath), 
-                    tool: currentTool, 
-                    color: color, 
-                    width: width 
-                });
-            } else if (currentTool === 'rectangle' || currentTool === 'circle') {
-                redrawAll();
-                drawShape(startX, startY, coords.x, coords.y, currentTool, color, width, true);
+                if (currentTool === 'pen' || currentTool === 'highlighter') {
+                    currentPath.push({ x: coords.x, y: coords.y });
+                    redrawAll();
+                    drawCtx.beginPath();
+                    drawCtx.strokeStyle = currentTool === 'highlighter' ? hexToRgba(color, 0.3) : color;
+                    drawCtx.lineWidth = currentTool === 'highlighter' ? width * 3 : width;
+                    drawCtx.lineCap = 'round';
+                    drawCtx.lineJoin = 'round';
+                    drawCtx.moveTo(currentPath[0].x, currentPath[0].y);
+                    for (let i = 1; i < currentPath.length; i++) {
+                        drawCtx.lineTo(currentPath[i].x, currentPath[i].y);
+                    }
+                    drawCtx.stroke();
+                    
+                    socket.emit('drawing', { 
+                        sessionId, 
+                        path: pathToRatio(currentPath), 
+                        tool: currentTool, 
+                        color: color, 
+                        width: width 
+                    });
+                } else if (currentTool === 'rectangle' || currentTool === 'circle') {
+                    redrawAll();
+                    drawShape(startX, startY, coords.x, coords.y, currentTool, color, width, true);
+                }
             }
         });
         
@@ -557,22 +580,29 @@
             const color = colorPicker.value;
             const width = parseInt(strokeWidth.value);
             
-            let drawingData = { tool: currentTool, color: color, width: width };
-            
-            if (currentTool === 'pen' || currentTool === 'highlighter') {
-                drawingData.path = pathToRatio(currentPath);
+            if (currentTool === 'eraser') {
+                // 지우개 종료 - 히스토리에 추가
+                const eraserData = { tool: 'eraser', path: pathToRatio(currentPath) };
+                drawHistory.push(eraserData);
+                socket.emit('eraser-end', { sessionId, eraserData });
             } else {
-                const startRatio = toRatio(startX, startY);
-                const endRatio = toRatio(coords.x, coords.y);
-                drawingData.startX = startRatio.x;
-                drawingData.startY = startRatio.y;
-                drawingData.endX = endRatio.x;
-                drawingData.endY = endRatio.y;
+                let drawingData = { tool: currentTool, color: color, width: width };
+                
+                if (currentTool === 'pen' || currentTool === 'highlighter') {
+                    drawingData.path = pathToRatio(currentPath);
+                } else {
+                    const startRatio = toRatio(startX, startY);
+                    const endRatio = toRatio(coords.x, coords.y);
+                    drawingData.startX = startRatio.x;
+                    drawingData.startY = startRatio.y;
+                    drawingData.endX = endRatio.x;
+                    drawingData.endY = endRatio.y;
+                }
+                
+                drawHistory.push(drawingData);
+                redrawAll();
+                socket.emit('draw-end', { sessionId, drawingData });
             }
-            
-            drawHistory.push(drawingData);
-            redrawAll();
-            socket.emit('draw-end', { sessionId, drawingData });
         });
         
         drawCanvas.addEventListener('mouseleave', () => {
@@ -580,6 +610,15 @@
                 socket.emit('pointer-move', { sessionId, x: 0, y: 0, visible: false });
             }
         });
+        
+        function eraseAt(x, y) {
+            drawCtx.save();
+            drawCtx.globalCompositeOperation = 'destination-out';
+            drawCtx.beginPath();
+            drawCtx.arc(x, y, ERASER_SIZE, 0, Math.PI * 2);
+            drawCtx.fill();
+            drawCtx.restore();
+        }
         
         function hexToRgba(hex, alpha) {
             const r = parseInt(hex.slice(1, 3), 16);
@@ -608,7 +647,18 @@
         function redrawAll() {
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
-                if (item.tool === 'pen' || item.tool === 'highlighter') {
+                if (item.tool === 'eraser') {
+                    // 지우개 경로 재생
+                    const realPath = pathFromRatio(item.path);
+                    drawCtx.save();
+                    drawCtx.globalCompositeOperation = 'destination-out';
+                    for (const point of realPath) {
+                        drawCtx.beginPath();
+                        drawCtx.arc(point.x, point.y, ERASER_SIZE, 0, Math.PI * 2);
+                        drawCtx.fill();
+                    }
+                    drawCtx.restore();
+                } else if (item.tool === 'pen' || item.tool === 'highlighter') {
                     const realPath = pathFromRatio(item.path);
                     drawCtx.beginPath();
                     drawCtx.strokeStyle = item.tool === 'highlighter' ? hexToRgba(item.color, 0.3) : item.color;
@@ -642,7 +692,6 @@
             socket.emit('clear-drawings', { sessionId });
         });
         
-        // 화면 캡처 기능
         document.getElementById('captureBtn').addEventListener('click', () => {
             captureScreen();
         });

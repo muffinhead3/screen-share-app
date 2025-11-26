@@ -245,6 +245,23 @@ io.on('connection', (socket) => {
         socket.to(data.sessionId).emit('draw-ended', data);
     });
     
+    // 지우개 이벤트
+    socket.on('eraser-start', (data) => {
+        socket.to(data.sessionId).emit('eraser-started', data);
+    });
+    
+    socket.on('erasing', (data) => {
+        socket.to(data.sessionId).emit('erasing-update', data);
+    });
+    
+    socket.on('eraser-end', (data) => {
+        const session = sessions.get(data.sessionId);
+        if (session && data.eraserData) {
+            session.drawings.push(data.eraserData);
+        }
+        socket.to(data.sessionId).emit('eraser-ended', data);
+    });
+    
     socket.on('clear-drawings', (data) => {
         const session = sessions.get(data.sessionId);
         if (session) {
@@ -296,10 +313,11 @@ server.listen(PORT, () => {
     console.log('  3. PDF 또는 이미지 파일 업로드');
     console.log('  4. 생성된 링크를 고객에게 전달');
     console.log('');
-    console.log('  새 기능:');
-    console.log('  - 이미지 파일 지원 (JPG, PNG, GIF)');
+    console.log('  기능:');
+    console.log('  - PDF / 이미지 파일 지원 (JPG, PNG, GIF)');
     console.log('  - 화면 캡처 저장');
     console.log('  - 줌 확대/축소 (50% ~ 300%)');
+    console.log('  - 지우개 도구');
     console.log('');
     console.log('========================================');
 });

@@ -31,8 +31,23 @@
         .toolbar-divider { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
         .page-info { font-size: 0.9rem; background: rgba(255,255,255,0.1); padding: 6px 12px; border-radius: 15px; }
         .zoom-info { font-size: 0.85rem; color: #4fc3f7; font-weight: bold; background: rgba(79, 195, 247, 0.2); padding: 6px 12px; border-radius: 15px; }
-        .pdf-canvas-container { flex: 1; display: flex; align-items: center; justify-content: center; overflow: auto; padding: 15px; position: relative; -webkit-overflow-scrolling: touch; }
-        .canvas-wrapper { position: relative; display: inline-block; box-shadow: 0 10px 40px rgba(0,0,0,0.4); }
+        
+        /* 스크롤 문제 수정 - 중요! */
+        .pdf-canvas-container { 
+            flex: 1; 
+            overflow: auto; 
+            padding: 15px; 
+            position: relative; 
+            -webkit-overflow-scrolling: touch;
+            /* 중앙 정렬 제거하고 기본 정렬 사용 */
+        }
+        .canvas-wrapper { 
+            position: relative; 
+            display: inline-block; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.4); 
+            /* 최소 크기 설정으로 스크롤 영역 확보 */
+            min-width: fit-content;
+        }
         #pdfCanvas { display: block; background: #fff; }
         #drawCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
         #consultantPointer { position: absolute; width: 30px; height: 30px; transform: translate(-50%, -50%); pointer-events: none; z-index: 1000; display: none; }
@@ -83,7 +98,7 @@
                     <span id="zoomInfo" class="zoom-info">🔍 100%</span>
                 </div>
             </div>
-            <div class="pdf-canvas-container">
+            <div class="pdf-canvas-container" id="canvasContainer">
                 <div class="canvas-wrapper">
                     <canvas id="pdfCanvas"></canvas>
                     <canvas id="drawCanvas"></canvas>
@@ -109,12 +124,14 @@
         let currentImage = null;
         let currentZoom = 1.0;
         let currentFileUrl = null;
+        const ERASER_SIZE = 20;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
         const pdfCtx = pdfCanvas.getContext('2d');
         const drawCtx = drawCanvas.getContext('2d');
         const pointer = document.getElementById('consultantPointer');
+        const canvasContainer = document.getElementById('canvasContainer');
         
         function fromRatio(rx, ry) {
             return { x: rx * drawCanvas.width, y: ry * drawCanvas.height };
@@ -235,6 +252,25 @@
                     redrawAll();
                 }
             });
+            
+            // 지우개 이벤트 수신
+            socket.on('eraser-started', (data) => {
+                const pos = fromRatio(data.x, data.y);
+                eraseAt(pos.x, pos.y);
+            });
+            socket.on('erasing-update', (data) => {
+                const realPath = pathFromRatio(data.path);
+                for (const point of realPath) {
+                    eraseAt(point.x, point.y);
+                }
+            });
+            socket.on('eraser-ended', (data) => {
+                if (data.eraserData) {
+                    drawHistory.push(data.eraserData);
+                    redrawAll();
+                }
+            });
+            
             socket.on('drawing-undone', () => {
                 if (drawHistory.length > 0) {
                     drawHistory.pop();
@@ -255,6 +291,15 @@
                     pointer.classList.remove('active');
                 }
             });
+        }
+        
+        function eraseAt(x, y) {
+            drawCtx.save();
+            drawCtx.globalCompositeOperation = 'destination-out';
+            drawCtx.beginPath();
+            drawCtx.arc(x, y, ERASER_SIZE, 0, Math.PI * 2);
+            drawCtx.fill();
+            drawCtx.restore();
         }
         
         async function loadImage(url) {
@@ -372,7 +417,18 @@
         function redrawAll() {
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
-                if (item.tool === 'pen' || item.tool === 'highlighter') {
+                if (item.tool === 'eraser') {
+                    // 지우개 경로 재생
+                    const realPath = pathFromRatio(item.path);
+                    drawCtx.save();
+                    drawCtx.globalCompositeOperation = 'destination-out';
+                    for (const point of realPath) {
+                        drawCtx.beginPath();
+                        drawCtx.arc(point.x, point.y, ERASER_SIZE, 0, Math.PI * 2);
+                        drawCtx.fill();
+                    }
+                    drawCtx.restore();
+                } else if (item.tool === 'pen' || item.tool === 'highlighter') {
                     const realPath = pathFromRatio(item.path);
                     drawPathReal(realPath, item.tool, item.color, item.width);
                 } else {
@@ -404,10 +460,6 @@
             document.getElementById('errorTitle').textContent = title;
             document.getElementById('errorText').textContent = text;
         }
-        
-        window.addEventListener('resize', () => {
-            // 화면 크기 변경 시에는 줌 레벨 유지
-        });
         
         init();
     </script>
