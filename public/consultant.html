@@ -177,6 +177,32 @@
         const pdfCtx = pdfCanvas.getContext('2d');
         const drawCtx = drawCanvas.getContext('2d');
         
+        // 좌표를 비율로 변환 (0~1 사이 값)
+        function toRatio(x, y) {
+            return {
+                x: x / drawCanvas.width,
+                y: y / drawCanvas.height
+            };
+        }
+        
+        // 비율을 실제 좌표로 변환
+        function fromRatio(rx, ry) {
+            return {
+                x: rx * drawCanvas.width,
+                y: ry * drawCanvas.height
+            };
+        }
+        
+        // 경로를 비율로 변환
+        function pathToRatio(path) {
+            return path.map(p => toRatio(p.x, p.y));
+        }
+        
+        // 비율 경로를 실제 좌표로 변환
+        function pathFromRatio(ratioPath) {
+            return ratioPath.map(p => fromRatio(p.x, p.y));
+        }
+        
         function initSocket() {
             socket = io();
             socket.on('connect', () => {
@@ -356,17 +382,30 @@
             startX = coords.x;
             startY = coords.y;
             currentPath = [{ x: startX, y: startY }];
-            socket.emit('draw-start', { sessionId, tool: currentTool, color: colorPicker.value, width: parseInt(strokeWidth.value), x: startX, y: startY });
+            
+            const startRatio = toRatio(startX, startY);
+            socket.emit('draw-start', { 
+                sessionId, 
+                tool: currentTool, 
+                color: colorPicker.value, 
+                width: parseInt(strokeWidth.value), 
+                x: startRatio.x, 
+                y: startRatio.y 
+            });
         });
         
         drawCanvas.addEventListener('mousemove', (e) => {
             const coords = getCanvasCoords(e);
+            
             if (currentTool === 'pointer' && sessionId) {
-                socket.emit('pointer-move', { sessionId, x: coords.x / drawCanvas.width, y: coords.y / drawCanvas.height, visible: true });
+                const ratio = toRatio(coords.x, coords.y);
+                socket.emit('pointer-move', { sessionId, x: ratio.x, y: ratio.y, visible: true });
             }
+            
             if (!isDrawing) return;
             const color = colorPicker.value;
             const width = parseInt(strokeWidth.value);
+            
             if (currentTool === 'pen' || currentTool === 'highlighter') {
                 currentPath.push({ x: coords.x, y: coords.y });
                 redrawAll();
@@ -380,7 +419,15 @@
                     drawCtx.lineTo(currentPath[i].x, currentPath[i].y);
                 }
                 drawCtx.stroke();
-                socket.emit('drawing', { sessionId, path: currentPath, tool: currentTool, color: color, width: width });
+                
+                // 비율로 변환하여 전송
+                socket.emit('drawing', { 
+                    sessionId, 
+                    path: pathToRatio(currentPath), 
+                    tool: currentTool, 
+                    color: color, 
+                    width: width 
+                });
             } else if (currentTool === 'rectangle' || currentTool === 'circle') {
                 redrawAll();
                 drawShape(startX, startY, coords.x, coords.y, currentTool, color, width, true);
@@ -393,15 +440,22 @@
             const coords = getCanvasCoords(e);
             const color = colorPicker.value;
             const width = parseInt(strokeWidth.value);
+            
             let drawingData = { tool: currentTool, color: color, width: width };
+            
             if (currentTool === 'pen' || currentTool === 'highlighter') {
-                drawingData.path = currentPath;
+                // 비율로 저장
+                drawingData.path = pathToRatio(currentPath);
             } else {
-                drawingData.startX = startX;
-                drawingData.startY = startY;
-                drawingData.endX = coords.x;
-                drawingData.endY = coords.y;
+                // 비율로 저장
+                const startRatio = toRatio(startX, startY);
+                const endRatio = toRatio(coords.x, coords.y);
+                drawingData.startX = startRatio.x;
+                drawingData.startY = startRatio.y;
+                drawingData.endX = endRatio.x;
+                drawingData.endY = endRatio.y;
             }
+            
             drawHistory.push(drawingData);
             redrawAll();
             socket.emit('draw-end', { sessionId, drawingData });
@@ -441,18 +495,23 @@
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
                 if (item.tool === 'pen' || item.tool === 'highlighter') {
+                    // 비율을 실제 좌표로 변환
+                    const realPath = pathFromRatio(item.path);
                     drawCtx.beginPath();
                     drawCtx.strokeStyle = item.tool === 'highlighter' ? hexToRgba(item.color, 0.3) : item.color;
                     drawCtx.lineWidth = item.tool === 'highlighter' ? item.width * 3 : item.width;
                     drawCtx.lineCap = 'round';
                     drawCtx.lineJoin = 'round';
-                    drawCtx.moveTo(item.path[0].x, item.path[0].y);
-                    for (let i = 1; i < item.path.length; i++) {
-                        drawCtx.lineTo(item.path[i].x, item.path[i].y);
+                    drawCtx.moveTo(realPath[0].x, realPath[0].y);
+                    for (let i = 1; i < realPath.length; i++) {
+                        drawCtx.lineTo(realPath[i].x, realPath[i].y);
                     }
                     drawCtx.stroke();
                 } else {
-                    drawShape(item.startX, item.startY, item.endX, item.endY, item.tool, item.color, item.width);
+                    // 비율을 실제 좌표로 변환
+                    const start = fromRatio(item.startX, item.startY);
+                    const end = fromRatio(item.endX, item.endY);
+                    drawShape(start.x, start.y, end.x, end.y, item.tool, item.color, item.width);
                 }
             }
         }
