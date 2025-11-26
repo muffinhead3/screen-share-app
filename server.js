@@ -14,7 +14,7 @@ const io = socketIo(server, {
     }
 });
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static('uploads'));
 
 const storage = multer.diskStorage({
