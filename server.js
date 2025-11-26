@@ -66,7 +66,6 @@ app.post('/api/create-session', (req, res) => {
         fileType: null,
         currentPage: 1,
         totalPages: 1,
-        zoom: 1.0,
         drawings: [],
         users: { consultant: null, customer: null }
     });
@@ -99,7 +98,6 @@ app.post('/api/upload-file/:sessionId', upload.single('file'), (req, res) => {
     session.fileUrl = fileUrl;
     session.fileType = fileType;
     session.currentPage = 1;
-    session.zoom = 1.0;
     session.drawings = [];
     
     // 연결된 고객에게 파일 로드 알림
@@ -135,7 +133,6 @@ app.post('/api/upload-pdf/:sessionId', upload.single('pdf'), (req, res) => {
     session.fileUrl = pdfUrl;
     session.fileType = 'pdf';
     session.currentPage = 1;
-    session.zoom = 1.0;
     session.drawings = [];
     
     io.to(sessionId).emit('pdf-loaded', { pdfUrl: pdfUrl });
@@ -163,7 +160,6 @@ app.get('/api/session/:sessionId', (req, res) => {
             fileType: session.fileType,
             currentPage: session.currentPage,
             totalPages: session.totalPages,
-            zoom: session.zoom,
             drawings: session.drawings
         }
     });
@@ -190,13 +186,12 @@ io.on('connection', (socket) => {
             session.users.consultant = socket.id;
         } else {
             session.users.customer = socket.id;
-            // 고객 접속 시 현재 세션 상태 전송 (줌 포함)
+            // 고객 접속 시 현재 세션 상태 전송 (줌은 독립적이므로 전송 안 함)
             socket.emit('session-state', {
                 fileUrl: session.fileUrl,
                 fileType: session.fileType,
                 currentPage: session.currentPage,
                 totalPages: session.totalPages,
-                zoom: session.zoom,
                 drawings: session.drawings
             });
         }
@@ -214,17 +209,6 @@ io.on('connection', (socket) => {
             socket.to(data.sessionId).emit('page-changed', {
                 page: data.page,
                 totalPages: data.totalPages
-            });
-        }
-    });
-    
-    // 줌 변경 이벤트
-    socket.on('zoom-change', (data) => {
-        const session = sessions.get(data.sessionId);
-        if (session) {
-            session.zoom = data.zoom;
-            socket.to(data.sessionId).emit('zoom-changed', {
-                zoom: data.zoom
             });
         }
     });
@@ -316,8 +300,9 @@ server.listen(PORT, () => {
     console.log('  기능:');
     console.log('  - PDF / 이미지 파일 지원 (JPG, PNG, GIF)');
     console.log('  - 화면 캡처 저장');
-    console.log('  - 줌 확대/축소 (50% ~ 300%)');
+    console.log('  - 줌 확대/축소 (각자 독립적)');
     console.log('  - 지우개 도구');
+    console.log('  - 화면 맞춤 (고객용)');
     console.log('');
     console.log('========================================');
 });

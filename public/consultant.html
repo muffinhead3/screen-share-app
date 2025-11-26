@@ -83,6 +83,7 @@
         .toast.warning { border-left: 4px solid #ff9800; }
         .capture-section { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); }
         .eraser-cursor { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="white" stroke="black" stroke-width="2"/></svg>') 10 10, auto; }
+        .zoom-note { font-size: 0.75rem; color: #888; text-align: center; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -171,6 +172,7 @@
                         <button id="zoomResetBtn" class="zoom-btn" title="원래 크기" style="font-size: 0.8rem;">100</button>
                     </div>
                 </div>
+                <div class="zoom-note">💡 줌은 내 화면에서만 적용됩니다 (고객 화면과 독립)</div>
                 <div class="pdf-canvas-container">
                     <div class="canvas-wrapper">
                         <canvas id="pdfCanvas"></canvas>
@@ -241,7 +243,6 @@
                 if (data.role === 'customer') {
                     updateStatus('connected', '고객 연결됨');
                     showToast('고객이 접속했습니다!', 'success');
-                    socket.emit('zoom-change', { sessionId, zoom: currentZoom });
                 }
             });
             socket.on('user-left', (data) => {
@@ -437,9 +438,7 @@
                 renderPage(currentPage);
             }
             
-            if (socket && sessionId) {
-                socket.emit('zoom-change', { sessionId, zoom: currentZoom });
-            }
+            // 줌은 고객에게 전송하지 않음 (독립적)
         }
         
         document.getElementById('prevPageBtn').addEventListener('click', () => {
@@ -511,7 +510,6 @@
             currentPath = [{ x: startX, y: startY }];
             
             if (currentTool === 'eraser') {
-                // 지우개 시작
                 eraseAt(coords.x, coords.y);
                 socket.emit('eraser-start', { sessionId, x: toRatio(coords.x, coords.y).x, y: toRatio(coords.x, coords.y).y });
             } else {
@@ -581,7 +579,6 @@
             const width = parseInt(strokeWidth.value);
             
             if (currentTool === 'eraser') {
-                // 지우개 종료 - 히스토리에 추가
                 const eraserData = { tool: 'eraser', path: pathToRatio(currentPath) };
                 drawHistory.push(eraserData);
                 socket.emit('eraser-end', { sessionId, eraserData });
@@ -648,7 +645,6 @@
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
                 if (item.tool === 'eraser') {
-                    // 지우개 경로 재생
                     const realPath = pathFromRatio(item.path);
                     drawCtx.save();
                     drawCtx.globalCompositeOperation = 'destination-out';

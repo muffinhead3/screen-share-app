@@ -26,26 +26,29 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .pdf-viewer { flex: 1; display: none; flex-direction: column; background: #1a1a2e; }
         .pdf-viewer.active { display: flex; }
-        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; flex-wrap: wrap; }
-        .toolbar-group { display: flex; align-items: center; gap: 8px; }
+        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; flex-wrap: wrap; }
+        .toolbar-group { display: flex; align-items: center; gap: 6px; }
         .toolbar-divider { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
-        .page-info { font-size: 0.9rem; background: rgba(255,255,255,0.1); padding: 6px 12px; border-radius: 15px; }
-        .zoom-info { font-size: 0.85rem; color: #4fc3f7; font-weight: bold; background: rgba(79, 195, 247, 0.2); padding: 6px 12px; border-radius: 15px; }
+        .page-info { font-size: 0.85rem; background: rgba(255,255,255,0.1); padding: 6px 10px; border-radius: 15px; }
+        .zoom-info { font-size: 0.8rem; color: #4fc3f7; font-weight: bold; min-width: 45px; text-align: center; }
+        .zoom-btn { width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,0.15); border: none; color: #fff; cursor: pointer; font-size: 1rem; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
+        .zoom-btn:hover { background: rgba(255,255,255,0.25); }
+        .zoom-btn:active { transform: scale(0.95); }
+        .fit-btn { padding: 6px 10px; border-radius: 8px; background: rgba(79, 195, 247, 0.3); border: 1px solid rgba(79, 195, 247, 0.5); color: #4fc3f7; cursor: pointer; font-size: 0.75rem; font-weight: bold; transition: all 0.2s; }
+        .fit-btn:hover { background: rgba(79, 195, 247, 0.5); }
+        .fit-btn:active { transform: scale(0.95); }
         
-        /* 스크롤 문제 수정 - 중요! */
         .pdf-canvas-container { 
             flex: 1; 
             overflow: auto; 
             padding: 15px; 
             position: relative; 
             -webkit-overflow-scrolling: touch;
-            /* 중앙 정렬 제거하고 기본 정렬 사용 */
         }
         .canvas-wrapper { 
             position: relative; 
             display: inline-block; 
             box-shadow: 0 10px 40px rgba(0,0,0,0.4); 
-            /* 최소 크기 설정으로 스크롤 영역 확보 */
             min-width: fit-content;
         }
         #pdfCanvas { display: block; background: #fff; }
@@ -61,7 +64,7 @@
         .error-icon { font-size: 4rem; margin-bottom: 20px; }
         .error-title { font-size: 1.3rem; margin-bottom: 10px; }
         .error-text { font-size: 0.95rem; opacity: 0.8; }
-        .footer-info { background: rgba(0,0,0,0.3); padding: 12px 20px; text-align: center; color: rgba(255,255,255,0.7); font-size: 0.85rem; }
+        .footer-info { background: rgba(0,0,0,0.3); padding: 10px 20px; text-align: center; color: rgba(255,255,255,0.7); font-size: 0.8rem; }
         .footer-info span { color: #fff; }
     </style>
 </head>
@@ -91,11 +94,16 @@
         <div id="pdfViewer" class="pdf-viewer">
             <div class="pdf-toolbar">
                 <div class="toolbar-group">
-                    <span id="pageInfo" class="page-info">📄 1 / 1 페이지</span>
+                    <span id="pageInfo" class="page-info">📄 1 / 1</span>
                 </div>
                 <div class="toolbar-divider"></div>
                 <div class="toolbar-group">
-                    <span id="zoomInfo" class="zoom-info">🔍 100%</span>
+                    <button id="zoomOutBtn" class="zoom-btn" title="축소">➖</button>
+                    <span id="zoomInfo" class="zoom-info">100%</span>
+                    <button id="zoomInBtn" class="zoom-btn" title="확대">➕</button>
+                </div>
+                <div class="toolbar-group">
+                    <button id="fitWidthBtn" class="fit-btn" title="화면 맞춤">📱 맞춤</button>
                 </div>
             </div>
             <div class="pdf-canvas-container" id="canvasContainer">
@@ -108,7 +116,7 @@
         </div>
     </div>
     
-    <div class="footer-info">💡 <span>스피커폰</span>으로 전환하시면 화면을 보면서 통화할 수 있습니다</div>
+    <div class="footer-info">💡 화면을 <span>확대/축소</span>하여 편하게 보세요</div>
     <div id="notification" class="notification"></div>
     
     <script>
@@ -124,7 +132,12 @@
         let currentImage = null;
         let currentZoom = 1.0;
         let currentFileUrl = null;
+        let originalWidth = 0;
+        let originalHeight = 0;
         const ERASER_SIZE = 20;
+        const MIN_ZOOM = 0.3;
+        const MAX_ZOOM = 3.0;
+        const ZOOM_STEP = 0.2;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -142,7 +155,26 @@
         }
         
         function updateZoomInfo() {
-            document.getElementById('zoomInfo').textContent = `🔍 ${Math.round(currentZoom * 100)}%`;
+            document.getElementById('zoomInfo').textContent = `${Math.round(currentZoom * 100)}%`;
+        }
+        
+        // 화면 맞춤 기능 - 화면 너비에 맞게 자동 줌
+        function fitToWidth() {
+            const containerWidth = canvasContainer.clientWidth - 30; // padding 고려
+            
+            if (currentFileType === 'image' && currentImage) {
+                currentZoom = containerWidth / currentImage.width;
+            } else if (pdfDoc) {
+                // PDF의 기본 너비 (scale 1.5 기준) 계산
+                currentZoom = containerWidth / (originalWidth / 1.5);
+            }
+            
+            // 줌 범위 제한
+            currentZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, currentZoom));
+            
+            updateZoomInfo();
+            applyZoom();
+            showNotification('화면에 맞춤');
         }
         
         async function init() {
@@ -156,8 +188,6 @@
                 initSocket();
                 if (data.session.fileUrl) {
                     currentFileUrl = data.session.fileUrl;
-                    currentZoom = data.session.zoom || 1.0;
-                    updateZoomInfo();
                     
                     if (data.session.fileType === 'image') {
                         await loadImage(data.session.fileUrl);
@@ -169,6 +199,11 @@
                     if (currentFileType === 'pdf') {
                         await renderPage(currentPage);
                     }
+                    
+                    // 처음 로드 시 화면에 맞춤
+                    setTimeout(() => {
+                        fitToWidth();
+                    }, 100);
                 }
             } catch (error) {
                 console.error('초기화 오류:', error);
@@ -188,8 +223,6 @@
             socket.on('session-state', async (data) => {
                 if (data.fileUrl) {
                     currentFileUrl = data.fileUrl;
-                    currentZoom = data.zoom || 1.0;
-                    updateZoomInfo();
                     
                     if (data.fileType === 'image') {
                         await loadImage(data.fileUrl);
@@ -201,6 +234,11 @@
                     }
                     drawHistory = data.drawings || [];
                     redrawAll();
+                    
+                    // 화면에 맞춤
+                    setTimeout(() => {
+                        fitToWidth();
+                    }, 100);
                 }
             });
             socket.on('user-joined', (data) => { if (data.role === 'consultant') showNotification('상담사가 접속했습니다'); });
@@ -210,7 +248,6 @@
                 drawHistory = [];
                 currentFileUrl = data.fileUrl;
                 currentZoom = 1.0;
-                updateZoomInfo();
                 
                 if (data.fileType === 'image') {
                     await loadImage(data.fileUrl);
@@ -218,6 +255,11 @@
                     await loadPDF(data.fileUrl);
                     await renderPage(1);
                 }
+                
+                // 새 파일 로드 시 화면에 맞춤
+                setTimeout(() => {
+                    fitToWidth();
+                }, 100);
             });
             socket.on('page-changed', async (data) => {
                 currentPage = data.page;
@@ -225,19 +267,6 @@
                 drawHistory = [];
                 await renderPage(currentPage);
                 showNotification(`${currentPage} 페이지로 이동`);
-            });
-            
-            // 줌 변경 이벤트 수신
-            socket.on('zoom-changed', async (data) => {
-                currentZoom = data.zoom;
-                updateZoomInfo();
-                
-                if (currentFileType === 'image' && currentImage) {
-                    renderImage();
-                } else if (pdfDoc) {
-                    await renderPage(currentPage);
-                }
-                showNotification(`화면 크기: ${Math.round(currentZoom * 100)}%`);
             });
             
             socket.on('draw-started', (data) => {});
@@ -253,7 +282,6 @@
                 }
             });
             
-            // 지우개 이벤트 수신
             socket.on('eraser-started', (data) => {
                 const pos = fromRatio(data.x, data.y);
                 eraseAt(pos.x, pos.y);
@@ -312,6 +340,8 @@
                     currentFileType = 'image';
                     totalPages = 1;
                     currentPage = 1;
+                    originalWidth = img.width;
+                    originalHeight = img.height;
                     document.getElementById('waitingScreen').style.display = 'none';
                     document.getElementById('errorScreen').classList.remove('active');
                     document.getElementById('pdfViewer').classList.add('active');
@@ -327,7 +357,6 @@
         function renderImage() {
             if (!currentImage) return;
             
-            // 줌 적용된 크기 계산
             let width = currentImage.width * currentZoom;
             let height = currentImage.height * currentZoom;
             
@@ -350,6 +379,12 @@
                 document.getElementById('waitingScreen').style.display = 'none';
                 document.getElementById('errorScreen').classList.remove('active');
                 document.getElementById('pdfViewer').classList.add('active');
+                
+                // 원본 크기 저장
+                const page = await pdfDoc.getPage(1);
+                const viewport = page.getViewport({ scale: 1.5 });
+                originalWidth = viewport.width;
+                originalHeight = viewport.height;
             } catch (error) {
                 console.error('PDF 로드 오류:', error);
                 showNotification('문서를 불러올 수 없습니다');
@@ -359,7 +394,7 @@
         async function renderPage(pageNum) {
             if (!pdfDoc) return;
             const page = await pdfDoc.getPage(pageNum);
-            const scale = 1.5 * currentZoom; // 기본 스케일에 줌 적용
+            const scale = 1.5 * currentZoom;
             const viewport = page.getViewport({ scale });
             
             pdfCanvas.width = viewport.width;
@@ -373,7 +408,36 @@
         }
         
         function updatePageInfo() {
-            document.getElementById('pageInfo').textContent = `📄 ${currentPage} / ${totalPages} 페이지`;
+            document.getElementById('pageInfo').textContent = `📄 ${currentPage} / ${totalPages}`;
+        }
+        
+        // 줌 버튼 이벤트
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            if (currentZoom < MAX_ZOOM) {
+                currentZoom = Math.min(currentZoom + ZOOM_STEP, MAX_ZOOM);
+                updateZoomInfo();
+                applyZoom();
+            }
+        });
+        
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            if (currentZoom > MIN_ZOOM) {
+                currentZoom = Math.max(currentZoom - ZOOM_STEP, MIN_ZOOM);
+                updateZoomInfo();
+                applyZoom();
+            }
+        });
+        
+        document.getElementById('fitWidthBtn').addEventListener('click', () => {
+            fitToWidth();
+        });
+        
+        function applyZoom() {
+            if (currentFileType === 'image' && currentImage) {
+                renderImage();
+            } else if (pdfDoc) {
+                renderPage(currentPage);
+            }
         }
         
         function hexToRgba(hex, alpha) {
@@ -418,7 +482,6 @@
             drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
             for (const item of drawHistory) {
                 if (item.tool === 'eraser') {
-                    // 지우개 경로 재생
                     const realPath = pathFromRatio(item.path);
                     drawCtx.save();
                     drawCtx.globalCompositeOperation = 'destination-out';
