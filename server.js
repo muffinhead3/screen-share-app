@@ -186,7 +186,7 @@ io.on('connection', (socket) => {
             session.users.consultant = socket.id;
         } else {
             session.users.customer = socket.id;
-            // 고객 접속 시 현재 세션 상태 전송 (줌은 독립적이므로 전송 안 함)
+            // 고객 접속 시 현재 세션 상태 전송
             socket.emit('session-state', {
                 fileUrl: session.fileUrl,
                 fileType: session.fileType,
@@ -301,8 +301,8 @@ server.listen(PORT, () => {
     console.log('  - PDF / 이미지 파일 지원 (JPG, PNG, GIF)');
     console.log('  - 화면 캡처 저장');
     console.log('  - 줌 확대/축소 (각자 독립적)');
+    console.log('  - 디바이스별 자동 최적화');
     console.log('  - 지우개 도구');
-    console.log('  - 화면 맞춤 (고객용)');
     console.log('');
     console.log('========================================');
 });

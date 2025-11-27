@@ -26,17 +26,18 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .pdf-viewer { flex: 1; display: none; flex-direction: column; background: #1a1a2e; }
         .pdf-viewer.active { display: flex; }
-        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; flex-wrap: wrap; }
+        .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 15px; background: rgba(0,0,0,0.5); color: #fff; flex-wrap: wrap; }
         .toolbar-group { display: flex; align-items: center; gap: 6px; }
         .toolbar-divider { width: 1px; height: 24px; background: rgba(255,255,255,0.2); }
-        .page-info { font-size: 0.85rem; background: rgba(255,255,255,0.1); padding: 6px 10px; border-radius: 15px; }
-        .zoom-info { font-size: 0.8rem; color: #4fc3f7; font-weight: bold; min-width: 45px; text-align: center; }
+        .page-info { font-size: 0.8rem; background: rgba(255,255,255,0.1); padding: 6px 10px; border-radius: 15px; }
+        .zoom-info { font-size: 0.75rem; color: #4fc3f7; font-weight: bold; min-width: 40px; text-align: center; }
         .zoom-btn { width: 32px; height: 32px; border-radius: 8px; background: rgba(255,255,255,0.15); border: none; color: #fff; cursor: pointer; font-size: 1rem; transition: all 0.2s; display: flex; align-items: center; justify-content: center; }
         .zoom-btn:hover { background: rgba(255,255,255,0.25); }
         .zoom-btn:active { transform: scale(0.95); }
-        .fit-btn { padding: 6px 10px; border-radius: 8px; background: rgba(79, 195, 247, 0.3); border: 1px solid rgba(79, 195, 247, 0.5); color: #4fc3f7; cursor: pointer; font-size: 0.75rem; font-weight: bold; transition: all 0.2s; }
+        .fit-btn { padding: 6px 8px; border-radius: 8px; background: rgba(79, 195, 247, 0.3); border: 1px solid rgba(79, 195, 247, 0.5); color: #4fc3f7; cursor: pointer; font-size: 0.7rem; font-weight: bold; transition: all 0.2s; white-space: nowrap; }
         .fit-btn:hover { background: rgba(79, 195, 247, 0.5); }
         .fit-btn:active { transform: scale(0.95); }
+        .device-info { font-size: 0.65rem; color: rgba(255,255,255,0.5); padding: 2px 8px; background: rgba(0,0,0,0.3); border-radius: 10px; }
         
         .pdf-canvas-container { 
             flex: 1; 
@@ -57,14 +58,14 @@
         #consultantPointer.active { display: block; }
         .pointer-circle { width: 100%; height: 100%; background: rgba(255, 0, 0, 0.3); border: 3px solid #ff0000; border-radius: 50%; animation: pointer-pulse 1s infinite; }
         @keyframes pointer-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(1.3); opacity: 0.7; } }
-        .notification { position: fixed; top: 70px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(0,0,0,0.9); color: #fff; padding: 12px 24px; border-radius: 25px; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; opacity: 0; transition: all 0.3s; z-index: 1000; }
+        .notification { position: fixed; top: 70px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(0,0,0,0.9); color: #fff; padding: 12px 24px; border-radius: 25px; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; opacity: 0; transition: all 0.3s; z-index: 1000; max-width: 90%; text-align: center; }
         .notification.show { transform: translateX(-50%) translateY(0); opacity: 1; }
         .error-screen { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; color: #fff; }
         .error-screen.active { display: flex; }
         .error-icon { font-size: 4rem; margin-bottom: 20px; }
         .error-title { font-size: 1.3rem; margin-bottom: 10px; }
         .error-text { font-size: 0.95rem; opacity: 0.8; }
-        .footer-info { background: rgba(0,0,0,0.3); padding: 10px 20px; text-align: center; color: rgba(255,255,255,0.7); font-size: 0.8rem; }
+        .footer-info { background: rgba(0,0,0,0.3); padding: 10px 20px; text-align: center; color: rgba(255,255,255,0.7); font-size: 0.75rem; }
         .footer-info span { color: #fff; }
     </style>
 </head>
@@ -105,6 +106,7 @@
                 <div class="toolbar-group">
                     <button id="fitWidthBtn" class="fit-btn" title="화면 맞춤">📱 맞춤</button>
                 </div>
+                <span id="deviceInfo" class="device-info"></span>
             </div>
             <div class="pdf-canvas-container" id="canvasContainer">
                 <div class="canvas-wrapper">
@@ -116,7 +118,7 @@
         </div>
     </div>
     
-    <div class="footer-info">💡 화면을 <span>확대/축소</span>하여 편하게 보세요</div>
+    <div class="footer-info">💡 <span>➕ ➖</span> 버튼으로 화면 크기를 조절하세요</div>
     <div id="notification" class="notification"></div>
     
     <script>
@@ -134,10 +136,11 @@
         let currentFileUrl = null;
         let originalWidth = 0;
         let originalHeight = 0;
+        let deviceType = 'unknown';
         const ERASER_SIZE = 20;
-        const MIN_ZOOM = 0.3;
+        const MIN_ZOOM = 0.2;
         const MAX_ZOOM = 3.0;
-        const ZOOM_STEP = 0.2;
+        const ZOOM_STEP = 0.15;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
@@ -145,6 +148,96 @@
         const drawCtx = drawCanvas.getContext('2d');
         const pointer = document.getElementById('consultantPointer');
         const canvasContainer = document.getElementById('canvasContainer');
+        
+        // 디바이스 감지 함수
+        function detectDevice() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            const userAgent = navigator.userAgent.toLowerCase();
+            
+            // 모바일 기기 확인
+            const isMobile = /android|webos|iphone|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
+            const isTablet = /ipad|android(?!.*mobile)/i.test(userAgent) || (width >= 768 && width <= 1024);
+            const isIPad = /ipad/i.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            
+            if (isIPad || isTablet) {
+                deviceType = 'tablet';
+            } else if (isMobile || width < 768) {
+                deviceType = 'mobile';
+            } else {
+                deviceType = 'pc';
+            }
+            
+            // 디바이스 정보 표시
+            const deviceNames = {
+                'pc': '💻 PC',
+                'tablet': '📱 태블릿',
+                'mobile': '📱 스마트폰'
+            };
+            document.getElementById('deviceInfo').textContent = `${deviceNames[deviceType]} (${width}×${height})`;
+            
+            console.log(`디바이스 감지: ${deviceType}, 해상도: ${width}x${height}`);
+            return deviceType;
+        }
+        
+        // 디바이스에 따른 최적 줌 계산
+        function calculateOptimalZoom() {
+            const containerWidth = canvasContainer.clientWidth - 30;
+            const containerHeight = canvasContainer.clientHeight - 30;
+            
+            let contentWidth, contentHeight;
+            
+            if (currentFileType === 'image' && currentImage) {
+                contentWidth = currentImage.width;
+                contentHeight = currentImage.height;
+            } else if (pdfDoc && originalWidth > 0) {
+                contentWidth = originalWidth / 1.5; // 기본 스케일 1.5 기준
+                contentHeight = originalHeight / 1.5;
+            } else {
+                return 1.0;
+            }
+            
+            let optimalZoom;
+            
+            switch (deviceType) {
+                case 'pc':
+                    // PC: 100% 또는 화면에 맞는 크기 중 작은 것
+                    const pcFitZoom = Math.min(containerWidth / contentWidth, containerHeight / contentHeight);
+                    optimalZoom = Math.min(1.0, pcFitZoom);
+                    break;
+                    
+                case 'tablet':
+                    // 태블릿: 화면 너비에 맞춤 (약간 여유)
+                    optimalZoom = (containerWidth * 0.95) / contentWidth;
+                    break;
+                    
+                case 'mobile':
+                default:
+                    // 스마트폰: 화면 너비에 맞춤
+                    optimalZoom = containerWidth / contentWidth;
+                    break;
+            }
+            
+            // 줌 범위 제한
+            optimalZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, optimalZoom));
+            
+            console.log(`최적 줌 계산: ${Math.round(optimalZoom * 100)}% (${deviceType})`);
+            return optimalZoom;
+        }
+        
+        // 화면 맞춤 기능
+        function fitToScreen() {
+            currentZoom = calculateOptimalZoom();
+            updateZoomInfo();
+            applyZoom();
+            
+            const deviceNames = {
+                'pc': 'PC',
+                'tablet': '태블릿',
+                'mobile': '스마트폰'
+            };
+            showNotification(`${deviceNames[deviceType]} 화면에 맞춤 (${Math.round(currentZoom * 100)}%)`);
+        }
         
         function fromRatio(rx, ry) {
             return { x: rx * drawCanvas.width, y: ry * drawCanvas.height };
@@ -158,26 +251,15 @@
             document.getElementById('zoomInfo').textContent = `${Math.round(currentZoom * 100)}%`;
         }
         
-        // 화면 맞춤 기능 - 화면 너비에 맞게 자동 줌
-        function fitToWidth() {
-            const containerWidth = canvasContainer.clientWidth - 30; // padding 고려
-            
-            if (currentFileType === 'image' && currentImage) {
-                currentZoom = containerWidth / currentImage.width;
-            } else if (pdfDoc) {
-                // PDF의 기본 너비 (scale 1.5 기준) 계산
-                currentZoom = containerWidth / (originalWidth / 1.5);
-            }
-            
-            // 줌 범위 제한
-            currentZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, currentZoom));
-            
-            updateZoomInfo();
-            applyZoom();
-            showNotification('화면에 맞춤');
-        }
-        
         async function init() {
+            // 디바이스 감지
+            detectDevice();
+            
+            // 화면 크기 변경 시 재감지
+            window.addEventListener('resize', () => {
+                detectDevice();
+            });
+            
             try {
                 const response = await fetch(`/api/session/${sessionId}`);
                 const data = await response.json();
@@ -200,9 +282,9 @@
                         await renderPage(currentPage);
                     }
                     
-                    // 처음 로드 시 화면에 맞춤
+                    // 디바이스에 맞게 자동 최적화
                     setTimeout(() => {
-                        fitToWidth();
+                        fitToScreen();
                     }, 100);
                 }
             } catch (error) {
@@ -235,9 +317,9 @@
                     drawHistory = data.drawings || [];
                     redrawAll();
                     
-                    // 화면에 맞춤
+                    // 디바이스에 맞게 자동 최적화
                     setTimeout(() => {
-                        fitToWidth();
+                        fitToScreen();
                     }, 100);
                 }
             });
@@ -247,7 +329,6 @@
                 showNotification('새 파일이 로드되었습니다');
                 drawHistory = [];
                 currentFileUrl = data.fileUrl;
-                currentZoom = 1.0;
                 
                 if (data.fileType === 'image') {
                     await loadImage(data.fileUrl);
@@ -256,9 +337,9 @@
                     await renderPage(1);
                 }
                 
-                // 새 파일 로드 시 화면에 맞춤
+                // 새 파일 로드 시 디바이스에 맞게 자동 최적화
                 setTimeout(() => {
-                    fitToWidth();
+                    fitToScreen();
                 }, 100);
             });
             socket.on('page-changed', async (data) => {
@@ -429,7 +510,7 @@
         });
         
         document.getElementById('fitWidthBtn').addEventListener('click', () => {
-            fitToWidth();
+            fitToScreen();
         });
         
         function applyZoom() {

@@ -31,6 +31,9 @@
         .btn-success { background: linear-gradient(135deg, #4caf50 0%, #388e3c 100%); color: #fff; }
         .btn-success:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(76, 175, 80, 0.4); }
         .btn-danger { background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%); color: #fff; }
+        .btn-danger:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(244, 67, 54, 0.4); }
+        .btn-warning { background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: #fff; }
+        .btn-warning:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(255, 152, 0, 0.4); }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .share-link-container { display: none; margin-top: 15px; }
         .share-link-container.active { display: block; }
@@ -57,6 +60,7 @@
         .stroke-width-label { font-size: 0.9rem; color: #888; }
         .stroke-width-slider { flex: 1; height: 6px; -webkit-appearance: none; background: rgba(255,255,255,0.2); border-radius: 3px; }
         .stroke-width-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; background: #4fc3f7; border-radius: 50%; cursor: pointer; }
+        .action-buttons { display: flex; flex-direction: column; gap: 10px; margin-top: 15px; }
         .pdf-viewer-container { flex: 1; display: flex; flex-direction: column; background: rgba(255,255,255,0.05); border-radius: 12px; overflow: hidden; }
         .pdf-toolbar { display: flex; align-items: center; justify-content: center; gap: 15px; padding: 15px; background: rgba(0,0,0,0.3); flex-wrap: wrap; }
         .toolbar-group { display: flex; align-items: center; gap: 10px; }
@@ -81,9 +85,8 @@
         .toast.success { border-left: 4px solid #4caf50; }
         .toast.info { border-left: 4px solid #2196f3; }
         .toast.warning { border-left: 4px solid #ff9800; }
-        .capture-section { margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); }
-        .eraser-cursor { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="white" stroke="black" stroke-width="2"/></svg>') 10 10, auto; }
         .zoom-note { font-size: 0.75rem; color: #888; text-align: center; margin-top: 5px; }
+        .eraser-cursor { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="white" stroke="black" stroke-width="2"/></svg>') 10 10, auto; }
     </style>
 </head>
 <body>
@@ -131,7 +134,6 @@
                     <button id="highlighterTool" class="tool-btn" title="형광펜">🖍️</button>
                     <button id="rectangleTool" class="tool-btn" title="사각형">⬜</button>
                     <button id="circleTool" class="tool-btn" title="원">⭕</button>
-                    <button id="eraserTool" class="tool-btn" title="지우개">🧽</button>
                     <input type="color" id="colorPicker" class="color-picker" value="#ff0000" title="색상 선택">
                 </div>
                 <div class="stroke-width-container">
@@ -139,12 +141,11 @@
                     <input type="range" id="strokeWidth" class="stroke-width-slider" min="1" max="20" value="3">
                     <span id="strokeWidthValue">3px</span>
                 </div>
-                <div style="display: flex; gap: 10px; margin-top: 15px;">
-                    <button id="undoBtn" class="btn btn-secondary" style="flex: 1;"><span>↩️</span> 되돌리기</button>
-                    <button id="clearBtn" class="btn btn-danger" style="flex: 1;"><span>🗑️</span> 전체 지우기</button>
-                </div>
                 
-                <div class="capture-section">
+                <div class="action-buttons">
+                    <button id="eraserBtn" class="btn btn-warning"><span>🧽</span> 지우개</button>
+                    <button id="undoBtn" class="btn btn-secondary"><span>↩️</span> 되돌리기</button>
+                    <button id="clearBtn" class="btn btn-danger"><span>🗑️</span> 전체 지우기</button>
                     <button id="captureBtn" class="btn btn-success"><span>📸</span> 화면 캡처 저장</button>
                 </div>
             </div>
@@ -201,6 +202,7 @@
         let currentFileType = null;
         let currentImage = null;
         let currentZoom = 1.0;
+        let isEraserMode = false;
         const MIN_ZOOM = 0.5;
         const MAX_ZOOM = 3.0;
         const ZOOM_STEP = 0.25;
@@ -437,8 +439,6 @@
             } else if (pdfDoc) {
                 renderPage(currentPage);
             }
-            
-            // 줌은 고객에게 전송하지 않음 (독립적)
         }
         
         document.getElementById('prevPageBtn').addEventListener('click', () => {
@@ -466,25 +466,48 @@
             pen: document.getElementById('penTool'),
             highlighter: document.getElementById('highlighterTool'),
             rectangle: document.getElementById('rectangleTool'),
-            circle: document.getElementById('circleTool'),
-            eraser: document.getElementById('eraserTool')
+            circle: document.getElementById('circleTool')
         };
+        
+        const eraserBtn = document.getElementById('eraserBtn');
+        
+        // 지우개 버튼 토글
+        eraserBtn.addEventListener('click', () => {
+            isEraserMode = !isEraserMode;
+            
+            if (isEraserMode) {
+                eraserBtn.style.background = 'linear-gradient(135deg, #e65100 0%, #bf360c 100%)';
+                eraserBtn.innerHTML = '<span>🧽</span> 지우개 사용 중';
+                currentTool = 'eraser';
+                Object.values(toolButtons).forEach(b => b.classList.remove('active'));
+                drawCanvas.style.cursor = 'none';
+                drawCanvas.classList.add('eraser-cursor');
+            } else {
+                eraserBtn.style.background = '';
+                eraserBtn.innerHTML = '<span>🧽</span> 지우개';
+                currentTool = 'pointer';
+                toolButtons.pointer.classList.add('active');
+                drawCanvas.style.cursor = 'default';
+                drawCanvas.classList.remove('eraser-cursor');
+            }
+        });
         
         Object.entries(toolButtons).forEach(([tool, btn]) => {
             btn.addEventListener('click', () => {
+                // 지우개 모드 해제
+                isEraserMode = false;
+                eraserBtn.style.background = '';
+                eraserBtn.innerHTML = '<span>🧽</span> 지우개';
+                drawCanvas.classList.remove('eraser-cursor');
+                
                 currentTool = tool;
                 Object.values(toolButtons).forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 
                 if (tool === 'pointer') {
                     drawCanvas.style.cursor = 'default';
-                    drawCanvas.classList.remove('eraser-cursor');
-                } else if (tool === 'eraser') {
-                    drawCanvas.style.cursor = 'none';
-                    drawCanvas.classList.add('eraser-cursor');
                 } else {
                     drawCanvas.style.cursor = 'crosshair';
-                    drawCanvas.classList.remove('eraser-cursor');
                 }
             });
         });
