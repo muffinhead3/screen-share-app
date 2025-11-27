@@ -11,6 +11,9 @@
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; color: #fff; }
         .header { background: rgba(255,255,255,0.1); padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; }
         .logo { font-size: 1.5rem; font-weight: bold; color: #4fc3f7; }
+        .header-right { display: flex; align-items: center; gap: 15px; }
+        .connection-count { background: rgba(79, 195, 247, 0.2); color: #4fc3f7; padding: 6px 12px; border-radius: 15px; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; }
+        .connection-count .count { font-weight: bold; font-size: 1rem; }
         .status-badge { padding: 8px 16px; border-radius: 20px; font-size: 0.9rem; display: flex; align-items: center; gap: 8px; }
         .status-badge.waiting { background: rgba(255, 193, 7, 0.2); color: #ffc107; }
         .status-badge.connected { background: rgba(76, 175, 80, 0.2); color: #4caf50; }
@@ -55,7 +58,43 @@
         .tool-btn { width: 45px; height: 45px; border-radius: 10px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.3s; background: rgba(255,255,255,0.1); border: 2px solid transparent; font-size: 1.2rem; }
         .tool-btn:hover { background: rgba(255,255,255,0.2); }
         .tool-btn.active { border-color: #4fc3f7; background: rgba(79, 195, 247, 0.2); }
-        .color-picker { width: 45px; height: 45px; border-radius: 10px; border: 2px solid rgba(255,255,255,0.3); cursor: pointer; padding: 0; }
+        /* 그라데이션 색상 선택기 */
+        .color-picker-wrapper { position: relative; width: 45px; height: 45px; }
+        .color-picker-display { 
+            width: 45px; height: 45px; border-radius: 50%; cursor: pointer; 
+            background: conic-gradient(red, yellow, lime, aqua, blue, magenta, red);
+            border: 3px solid rgba(255,255,255,0.3);
+            transition: all 0.3s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .color-picker-display:hover { border-color: #fff; transform: scale(1.1); }
+        .color-picker-inner { 
+            width: 20px; height: 20px; border-radius: 50%; 
+            border: 2px solid #fff; 
+        }
+        #colorPicker { position: absolute; width: 45px; height: 45px; opacity: 0; cursor: pointer; top: 0; left: 0; }
+        /* 모자이크 버튼 */
+        .blur-btn {
+            background: linear-gradient(135deg, rgba(255,255,255,0.3) 0%, rgba(255,255,255,0.1) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+        .blur-btn::before {
+            content: '';
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px; height: 30px;
+            background: repeating-linear-gradient(
+                45deg,
+                rgba(255,255,255,0.4),
+                rgba(255,255,255,0.4) 3px,
+                rgba(100,100,100,0.4) 3px,
+                rgba(100,100,100,0.4) 6px
+            );
+            border-radius: 4px;
+            filter: blur(1px);
+        }
         .stroke-width-container { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
         .stroke-width-label { font-size: 0.9rem; color: #888; }
         .stroke-width-slider { flex: 1; height: 6px; -webkit-appearance: none; background: rgba(255,255,255,0.2); border-radius: 3px; }
@@ -92,9 +131,17 @@
 <body>
     <header class="header">
         <div class="logo">📞 상담 화면 공유</div>
-        <div id="statusBadge" class="status-badge waiting">
-            <div class="status-dot"></div>
-            <span id="statusText">대기 중</span>
+        <div class="header-right">
+            <div id="connectionCount" class="connection-count" style="display: none;">
+                <span>👥</span>
+                <span>접속자:</span>
+                <span id="countNumber" class="count">0</span>
+                <span>명</span>
+            </div>
+            <div id="statusBadge" class="status-badge waiting">
+                <div class="status-dot"></div>
+                <span id="statusText">대기 중</span>
+            </div>
         </div>
     </header>
     
@@ -134,7 +181,13 @@
                     <button id="highlighterTool" class="tool-btn" title="형광펜">🖍️</button>
                     <button id="rectangleTool" class="tool-btn" title="사각형">⬜</button>
                     <button id="circleTool" class="tool-btn" title="원">⭕</button>
-                    <input type="color" id="colorPicker" class="color-picker" value="#ff0000" title="색상 선택">
+                    <button id="blurTool" class="tool-btn blur-btn" title="모자이크"></button>
+                    <div class="color-picker-wrapper">
+                        <div class="color-picker-display" title="색상 선택">
+                            <div id="colorPickerInner" class="color-picker-inner" style="background: #ff0000;"></div>
+                        </div>
+                        <input type="color" id="colorPicker" value="#ff0000" title="색상 선택">
+                    </div>
                 </div>
                 <div class="stroke-width-container">
                     <span class="stroke-width-label">굵기:</span>
@@ -203,15 +256,24 @@
         let currentImage = null;
         let currentZoom = 1.0;
         let isEraserMode = false;
+        let customerCount = 0;
         const MIN_ZOOM = 0.5;
         const MAX_ZOOM = 3.0;
         const ZOOM_STEP = 0.25;
         const ERASER_SIZE = 20;
+        const BLUR_SIZE = 10;
         
         const pdfCanvas = document.getElementById('pdfCanvas');
         const drawCanvas = document.getElementById('drawCanvas');
         const pdfCtx = pdfCanvas.getContext('2d');
         const drawCtx = drawCanvas.getContext('2d');
+        
+        // 색상 선택기 업데이트
+        const colorPicker = document.getElementById('colorPicker');
+        const colorPickerInner = document.getElementById('colorPickerInner');
+        colorPicker.addEventListener('input', (e) => {
+            colorPickerInner.style.background = e.target.value;
+        });
         
         function toRatio(x, y) {
             return { x: x / drawCanvas.width, y: y / drawCanvas.height };
@@ -233,6 +295,14 @@
             document.getElementById('zoomInfo').textContent = `${Math.round(currentZoom * 100)}%`;
         }
         
+        function updateConnectionCount(count) {
+            customerCount = count;
+            const countEl = document.getElementById('connectionCount');
+            const countNum = document.getElementById('countNumber');
+            countNum.textContent = count;
+            countEl.style.display = 'flex';
+        }
+        
         function initSocket() {
             socket = io();
             socket.on('connect', () => {
@@ -249,8 +319,18 @@
             });
             socket.on('user-left', (data) => {
                 if (data.role === 'customer') {
-                    updateStatus('waiting', '고객 연결 끊김');
+                    if (customerCount <= 1) {
+                        updateStatus('waiting', '대기 중');
+                    }
                     showToast('고객 연결이 끊겼습니다', 'warning');
+                }
+            });
+            socket.on('customer-count', (data) => {
+                updateConnectionCount(data.count);
+                if (data.count > 0) {
+                    updateStatus('connected', '고객 연결됨');
+                } else {
+                    updateStatus('waiting', '대기 중');
                 }
             });
         }
@@ -268,6 +348,7 @@
                     showToast('세션이 생성되었습니다!', 'success');
                     document.getElementById('createSessionBtn').disabled = true;
                     document.getElementById('createSessionBtn').innerHTML = '<span>✅</span> 세션 활성화됨';
+                    document.getElementById('connectionCount').style.display = 'flex';
                 }
             } catch (error) {
                 console.error('세션 생성 오류:', error);
@@ -466,7 +547,8 @@
             pen: document.getElementById('penTool'),
             highlighter: document.getElementById('highlighterTool'),
             rectangle: document.getElementById('rectangleTool'),
-            circle: document.getElementById('circleTool')
+            circle: document.getElementById('circleTool'),
+            blur: document.getElementById('blurTool')
         };
         
         const eraserBtn = document.getElementById('eraserBtn');
@@ -512,7 +594,6 @@
             });
         });
         
-        const colorPicker = document.getElementById('colorPicker');
         const strokeWidth = document.getElementById('strokeWidth');
         const strokeWidthValue = document.getElementById('strokeWidthValue');
         strokeWidth.addEventListener('input', (e) => { strokeWidthValue.textContent = `${e.target.value}px`; });
@@ -535,6 +616,8 @@
             if (currentTool === 'eraser') {
                 eraseAt(coords.x, coords.y);
                 socket.emit('eraser-start', { sessionId, x: toRatio(coords.x, coords.y).x, y: toRatio(coords.x, coords.y).y });
+            } else if (currentTool === 'blur') {
+                // 블러는 mouseup에서 처리
             } else {
                 const startRatio = toRatio(startX, startY);
                 socket.emit('draw-start', { 
@@ -562,6 +645,15 @@
                 eraseAt(coords.x, coords.y);
                 currentPath.push({ x: coords.x, y: coords.y });
                 socket.emit('erasing', { sessionId, path: pathToRatio(currentPath) });
+            } else if (currentTool === 'blur') {
+                // 블러 영역 프리뷰
+                redrawAll();
+                drawCtx.save();
+                drawCtx.strokeStyle = 'rgba(128, 128, 128, 0.8)';
+                drawCtx.lineWidth = 2;
+                drawCtx.setLineDash([5, 5]);
+                drawCtx.strokeRect(startX, startY, coords.x - startX, coords.y - startY);
+                drawCtx.restore();
             } else {
                 const color = colorPicker.value;
                 const width = parseInt(strokeWidth.value);
@@ -605,6 +697,28 @@
                 const eraserData = { tool: 'eraser', path: pathToRatio(currentPath) };
                 drawHistory.push(eraserData);
                 socket.emit('eraser-end', { sessionId, eraserData });
+            } else if (currentTool === 'blur') {
+                // 블러 영역 적용
+                const x = Math.min(startX, coords.x);
+                const y = Math.min(startY, coords.y);
+                const w = Math.abs(coords.x - startX);
+                const h = Math.abs(coords.y - startY);
+                
+                if (w > 5 && h > 5) {
+                    applyBlur(x, y, w, h);
+                    
+                    const startRatio = toRatio(x, y);
+                    const endRatio = toRatio(x + w, y + h);
+                    const blurData = {
+                        tool: 'blur',
+                        startX: startRatio.x,
+                        startY: startRatio.y,
+                        endX: endRatio.x,
+                        endY: endRatio.y
+                    };
+                    drawHistory.push(blurData);
+                    socket.emit('draw-end', { sessionId, drawingData: blurData });
+                }
             } else {
                 let drawingData = { tool: currentTool, color: color, width: width };
                 
@@ -638,6 +752,55 @@
             drawCtx.arc(x, y, ERASER_SIZE, 0, Math.PI * 2);
             drawCtx.fill();
             drawCtx.restore();
+        }
+        
+        function applyBlur(x, y, w, h) {
+            // 모자이크 효과 적용
+            const pixelSize = 10;
+            
+            // PDF 캔버스에서 해당 영역 데이터 가져오기
+            const imageData = pdfCtx.getImageData(x, y, w, h);
+            
+            // 모자이크 처리
+            for (let py = 0; py < h; py += pixelSize) {
+                for (let px = 0; px < w; px += pixelSize) {
+                    let r = 0, g = 0, b = 0, count = 0;
+                    
+                    // 블록 내 평균 색상 계산
+                    for (let dy = 0; dy < pixelSize && py + dy < h; dy++) {
+                        for (let dx = 0; dx < pixelSize && px + dx < w; dx++) {
+                            const idx = ((py + dy) * w + (px + dx)) * 4;
+                            r += imageData.data[idx];
+                            g += imageData.data[idx + 1];
+                            b += imageData.data[idx + 2];
+                            count++;
+                        }
+                    }
+                    
+                    r = Math.floor(r / count);
+                    g = Math.floor(g / count);
+                    b = Math.floor(b / count);
+                    
+                    // 블록에 평균 색상 적용
+                    for (let dy = 0; dy < pixelSize && py + dy < h; dy++) {
+                        for (let dx = 0; dx < pixelSize && px + dx < w; dx++) {
+                            const idx = ((py + dy) * w + (px + dx)) * 4;
+                            imageData.data[idx] = r;
+                            imageData.data[idx + 1] = g;
+                            imageData.data[idx + 2] = b;
+                        }
+                    }
+                }
+            }
+            
+            // 모자이크 처리된 이미지를 그리기 캔버스에 그리기
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            drawCtx.drawImage(tempCanvas, x, y);
         }
         
         function hexToRgba(hex, alpha) {
@@ -677,6 +840,14 @@
                         drawCtx.fill();
                     }
                     drawCtx.restore();
+                } else if (item.tool === 'blur') {
+                    const start = fromRatio(item.startX, item.startY);
+                    const end = fromRatio(item.endX, item.endY);
+                    const x = Math.min(start.x, end.x);
+                    const y = Math.min(start.y, end.y);
+                    const w = Math.abs(end.x - start.x);
+                    const h = Math.abs(end.y - start.y);
+                    applyBlur(x, y, w, h);
                 } else if (item.tool === 'pen' || item.tool === 'highlighter') {
                     const realPath = pathFromRatio(item.path);
                     drawCtx.beginPath();

@@ -39,18 +39,23 @@
         .fit-btn:active { transform: scale(0.95); }
         .device-info { font-size: 0.65rem; color: rgba(255,255,255,0.5); padding: 2px 8px; background: rgba(0,0,0,0.3); border-radius: 10px; }
         
+        /* 가운데 정렬 및 스크롤 개선 */
         .pdf-canvas-container { 
             flex: 1; 
             overflow: auto; 
             padding: 15px; 
             position: relative; 
             -webkit-overflow-scrolling: touch;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
         }
         .canvas-wrapper { 
             position: relative; 
             display: inline-block; 
             box-shadow: 0 10px 40px rgba(0,0,0,0.4); 
-            min-width: fit-content;
+            flex-shrink: 0;
+            margin: 0 auto;
         }
         #pdfCanvas { display: block; background: #fff; }
         #drawCanvas { position: absolute; top: 0; left: 0; pointer-events: none; }
@@ -155,7 +160,6 @@
             const height = window.innerHeight;
             const userAgent = navigator.userAgent.toLowerCase();
             
-            // 모바일 기기 확인
             const isMobile = /android|webos|iphone|ipod|blackberry|iemobile|opera mini/i.test(userAgent);
             const isTablet = /ipad|android(?!.*mobile)/i.test(userAgent) || (width >= 768 && width <= 1024);
             const isIPad = /ipad/i.test(userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -168,7 +172,6 @@
                 deviceType = 'pc';
             }
             
-            // 디바이스 정보 표시
             const deviceNames = {
                 'pc': '💻 PC',
                 'tablet': '📱 태블릿',
@@ -191,7 +194,7 @@
                 contentWidth = currentImage.width;
                 contentHeight = currentImage.height;
             } else if (pdfDoc && originalWidth > 0) {
-                contentWidth = originalWidth / 1.5; // 기본 스케일 1.5 기준
+                contentWidth = originalWidth / 1.5;
                 contentHeight = originalHeight / 1.5;
             } else {
                 return 1.0;
@@ -201,24 +204,24 @@
             
             switch (deviceType) {
                 case 'pc':
-                    // PC: 100% 또는 화면에 맞는 크기 중 작은 것
-                    const pcFitZoom = Math.min(containerWidth / contentWidth, containerHeight / contentHeight);
-                    optimalZoom = Math.min(1.0, pcFitZoom);
+                    // PC: 화면에 맞는 크기 (최대 100%)
+                    const pcFitWidth = containerWidth / contentWidth;
+                    const pcFitHeight = containerHeight / contentHeight;
+                    optimalZoom = Math.min(1.0, pcFitWidth, pcFitHeight);
                     break;
                     
                 case 'tablet':
-                    // 태블릿: 화면 너비에 맞춤 (약간 여유)
+                    // 태블릿: 화면 너비에 맞춤
                     optimalZoom = (containerWidth * 0.95) / contentWidth;
                     break;
                     
                 case 'mobile':
                 default:
-                    // 스마트폰: 화면 너비에 맞춤
-                    optimalZoom = containerWidth / contentWidth;
+                    // 스마트폰: 화면 너비에 정확히 맞춤
+                    optimalZoom = (containerWidth * 0.98) / contentWidth;
                     break;
             }
             
-            // 줌 범위 제한
             optimalZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, optimalZoom));
             
             console.log(`최적 줌 계산: ${Math.round(optimalZoom * 100)}% (${deviceType})`);
@@ -231,12 +234,33 @@
             updateZoomInfo();
             applyZoom();
             
+            // 가운데로 스크롤
+            setTimeout(() => {
+                scrollToCenter();
+            }, 100);
+            
             const deviceNames = {
                 'pc': 'PC',
                 'tablet': '태블릿',
                 'mobile': '스마트폰'
             };
             showNotification(`${deviceNames[deviceType]} 화면에 맞춤 (${Math.round(currentZoom * 100)}%)`);
+        }
+        
+        // 가운데로 스크롤
+        function scrollToCenter() {
+            const container = canvasContainer;
+            const wrapper = container.querySelector('.canvas-wrapper');
+            
+            if (wrapper && container) {
+                const scrollLeft = (wrapper.offsetWidth - container.clientWidth) / 2;
+                const scrollTop = 0;
+                
+                if (scrollLeft > 0) {
+                    container.scrollLeft = scrollLeft;
+                }
+                container.scrollTop = scrollTop;
+            }
         }
         
         function fromRatio(rx, ry) {
@@ -252,10 +276,8 @@
         }
         
         async function init() {
-            // 디바이스 감지
             detectDevice();
             
-            // 화면 크기 변경 시 재감지
             window.addEventListener('resize', () => {
                 detectDevice();
             });
@@ -282,10 +304,9 @@
                         await renderPage(currentPage);
                     }
                     
-                    // 디바이스에 맞게 자동 최적화
                     setTimeout(() => {
                         fitToScreen();
-                    }, 100);
+                    }, 200);
                 }
             } catch (error) {
                 console.error('초기화 오류:', error);
@@ -317,10 +338,9 @@
                     drawHistory = data.drawings || [];
                     redrawAll();
                     
-                    // 디바이스에 맞게 자동 최적화
                     setTimeout(() => {
                         fitToScreen();
-                    }, 100);
+                    }, 200);
                 }
             });
             socket.on('user-joined', (data) => { if (data.role === 'consultant') showNotification('상담사가 접속했습니다'); });
@@ -337,10 +357,9 @@
                     await renderPage(1);
                 }
                 
-                // 새 파일 로드 시 디바이스에 맞게 자동 최적화
                 setTimeout(() => {
                     fitToScreen();
-                }, 100);
+                }, 200);
             });
             socket.on('page-changed', async (data) => {
                 currentPage = data.page;
@@ -411,6 +430,48 @@
             drawCtx.restore();
         }
         
+        function applyBlur(x, y, w, h) {
+            const pixelSize = 10;
+            const imageData = pdfCtx.getImageData(x, y, w, h);
+            
+            for (let py = 0; py < h; py += pixelSize) {
+                for (let px = 0; px < w; px += pixelSize) {
+                    let r = 0, g = 0, b = 0, count = 0;
+                    
+                    for (let dy = 0; dy < pixelSize && py + dy < h; dy++) {
+                        for (let dx = 0; dx < pixelSize && px + dx < w; dx++) {
+                            const idx = ((py + dy) * w + (px + dx)) * 4;
+                            r += imageData.data[idx];
+                            g += imageData.data[idx + 1];
+                            b += imageData.data[idx + 2];
+                            count++;
+                        }
+                    }
+                    
+                    r = Math.floor(r / count);
+                    g = Math.floor(g / count);
+                    b = Math.floor(b / count);
+                    
+                    for (let dy = 0; dy < pixelSize && py + dy < h; dy++) {
+                        for (let dx = 0; dx < pixelSize && px + dx < w; dx++) {
+                            const idx = ((py + dy) * w + (px + dx)) * 4;
+                            imageData.data[idx] = r;
+                            imageData.data[idx + 1] = g;
+                            imageData.data[idx + 2] = b;
+                        }
+                    }
+                }
+            }
+            
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            drawCtx.drawImage(tempCanvas, x, y);
+        }
+        
         async function loadImage(url) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
@@ -461,7 +522,6 @@
                 document.getElementById('errorScreen').classList.remove('active');
                 document.getElementById('pdfViewer').classList.add('active');
                 
-                // 원본 크기 저장
                 const page = await pdfDoc.getPage(1);
                 const viewport = page.getViewport({ scale: 1.5 });
                 originalWidth = viewport.width;
@@ -492,7 +552,6 @@
             document.getElementById('pageInfo').textContent = `📄 ${currentPage} / ${totalPages}`;
         }
         
-        // 줌 버튼 이벤트
         document.getElementById('zoomInBtn').addEventListener('click', () => {
             if (currentZoom < MAX_ZOOM) {
                 currentZoom = Math.min(currentZoom + ZOOM_STEP, MAX_ZOOM);
@@ -572,6 +631,16 @@
                         drawCtx.fill();
                     }
                     drawCtx.restore();
+                } else if (item.tool === 'blur') {
+                    const start = fromRatio(item.startX, item.startY);
+                    const end = fromRatio(item.endX, item.endY);
+                    const x = Math.min(start.x, end.x);
+                    const y = Math.min(start.y, end.y);
+                    const w = Math.abs(end.x - start.x);
+                    const h = Math.abs(end.y - start.y);
+                    if (w > 0 && h > 0) {
+                        applyBlur(x, y, w, h);
+                    }
                 } else if (item.tool === 'pen' || item.tool === 'highlighter') {
                     const realPath = pathFromRatio(item.path);
                     drawPathReal(realPath, item.tool, item.color, item.width);

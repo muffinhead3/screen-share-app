@@ -67,7 +67,10 @@ app.post('/api/create-session', (req, res) => {
         currentPage: 1,
         totalPages: 1,
         drawings: [],
-        users: { consultant: null, customer: null }
+        users: { 
+            consultant: null, 
+            customers: new Set() // 여러 고객 지원
+        }
     });
     
     res.json({
@@ -165,6 +168,15 @@ app.get('/api/session/:sessionId', (req, res) => {
     });
 });
 
+// 접속자 수 전송 함수
+function sendCustomerCount(sessionId) {
+    const session = sessions.get(sessionId);
+    if (session) {
+        const count = session.users.customers.size;
+        io.to(sessionId).emit('customer-count', { count: count });
+    }
+}
+
 // Socket.io 연결 처리
 io.on('connection', (socket) => {
     console.log('새 클라이언트 연결:', socket.id);
@@ -184,8 +196,10 @@ io.on('connection', (socket) => {
         
         if (role === 'consultant') {
             session.users.consultant = socket.id;
+            // 상담사 접속 시 현재 고객 수 전송
+            sendCustomerCount(sessionId);
         } else {
-            session.users.customer = socket.id;
+            session.users.customers.add(socket.id);
             // 고객 접속 시 현재 세션 상태 전송
             socket.emit('session-state', {
                 fileUrl: session.fileUrl,
@@ -194,10 +208,12 @@ io.on('connection', (socket) => {
                 totalPages: session.totalPages,
                 drawings: session.drawings
             });
+            // 모든 사용자에게 고객 수 업데이트
+            sendCustomerCount(sessionId);
         }
         
         socket.to(sessionId).emit('user-joined', { role: role });
-        console.log(`${role}이(가) 세션 ${sessionId}에 참가`);
+        console.log(`${role}이(가) 세션 ${sessionId}에 참가 (고객 수: ${session.users.customers.size})`);
     });
     
     socket.on('page-change', (data) => {
@@ -273,10 +289,13 @@ io.on('connection', (socket) => {
                 if (socket.role === 'consultant') {
                     session.users.consultant = null;
                 } else {
-                    session.users.customer = null;
+                    session.users.customers.delete(socket.id);
+                    // 고객 수 업데이트 전송
+                    sendCustomerCount(socket.sessionId);
                 }
             }
             socket.to(socket.sessionId).emit('user-left', { role: socket.role });
+            console.log(`${socket.role}이(가) 세션 ${socket.sessionId}에서 나감`);
         }
         console.log('클라이언트 연결 해제:', socket.id);
     });
@@ -302,7 +321,8 @@ server.listen(PORT, () => {
     console.log('  - 화면 캡처 저장');
     console.log('  - 줌 확대/축소 (각자 독립적)');
     console.log('  - 디바이스별 자동 최적화');
-    console.log('  - 지우개 도구');
+    console.log('  - 모자이크/블러 도구');
+    console.log('  - 접속자 수 표시');
     console.log('');
     console.log('========================================');
 });
